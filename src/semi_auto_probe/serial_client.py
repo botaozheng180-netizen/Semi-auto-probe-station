@@ -70,15 +70,31 @@ class ControllerSerialClient:
             if self.is_open:
                 return
 
-            self._serial = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=self.timeout,
-                write_timeout=self.timeout,
-            )
+            try:
+                self._serial = self._open_serial(serial)
+            except serial.SerialException as exc:
+                self._serial = None
+                if not _serial_exception_supports_ch340_reconfigure_retry(exc):
+                    raise
+                self._serial = self._open_with_ch340_reconfigure_retry(serial)
+
+    def _open_serial(self, serial_module, *, baudrate: int | None = None, rtscts: bool = False, timeout: float | None = None):
+        return serial_module.Serial(
+            port=self.port,
+            baudrate=self.baudrate if baudrate is None else baudrate,
+            bytesize=serial_module.EIGHTBITS,
+            parity=serial_module.PARITY_NONE,
+            stopbits=serial_module.STOPBITS_ONE,
+            timeout=self.timeout if timeout is None else timeout,
+            write_timeout=self.timeout if timeout is None else timeout,
+            rtscts=rtscts,
+        )
+
+    def _open_with_ch340_reconfigure_retry(self, serial_module):
+        warmup = self._open_serial(serial_module, baudrate=9600, timeout=min(self.timeout, 0.2))
+        warmup.close()
+        time.sleep(0.2)
+        return self._open_serial(serial_module, rtscts=True)
 
     def close(self) -> None:
         with self._lock:
@@ -508,12 +524,12 @@ class ControllerSerialClient:
 
 def list_serial_ports() -> list[str]:
     try:
-        import serial
         from serial.tools import list_ports
     except ImportError:
         return []
 
     ports_by_device: dict[str, str] = {}
+    port_info_by_device = {}
     for port in list_ports.comports():
         device = port.device.strip()
         if not device:
@@ -522,13 +538,14 @@ def list_serial_ports() -> list[str]:
         if not key.startswith("COM"):
             continue
         ports_by_device.setdefault(key, device)
-
-    available_ports = [
+        port_info_by_device.setdefault(key, port)
+    return [
         device
-        for device in ports_by_device.values()
-        if _serial_port_is_available(serial, device)
+        for key, device in sorted(
+            ports_by_device.items(),
+            key=lambda item: _serial_port_sort_key(port_info_by_device[item[0]], item[1]),
+        )
     ]
-    return sorted(available_ports, key=_com_sort_key)
 
 
 def _serial_port_is_available(serial_module, device: str) -> bool:
@@ -539,6 +556,47 @@ def _serial_port_is_available(serial_module, device: str) -> bool:
 
     probe.close()
     return True
+
+
+def _serial_exception_supports_ch340_reconfigure_retry(exc: Exception) -> bool:
+    text = str(exc)
+    return (
+        "Cannot configure port" in text
+        and (
+            "A device attached to the system is not functioning" in text
+            or "WinError 31" in text
+            or ", 31)" in text
+        )
+    )
+
+
+def _serial_port_sort_key(port, device: str) -> tuple[int, int, str]:
+    return (_serial_port_priority(port), *_com_sort_key(device))
+
+
+def _serial_port_priority(port) -> int:
+    text = " ".join(
+        str(getattr(port, attr, "") or "")
+        for attr in ("description", "manufacturer", "product", "interface", "hwid")
+    ).upper()
+    if "BLUETOOTH" in text or "BTHENUM" in text:
+        return 2
+    preferred_terms = (
+        "USB-SERIAL",
+        "USB SERIAL",
+        "CH340",
+        "CH341",
+        "FTDI",
+        "CP210",
+        "SILICON LABS",
+        "PROLIFIC",
+        "USB\\VID",
+        "VID_",
+        "VID:PID",
+    )
+    if any(term in text for term in preferred_terms):
+        return 0
+    return 1
 
 
 def _com_sort_key(device: str) -> tuple[int, str]:

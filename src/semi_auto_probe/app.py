@@ -1200,6 +1200,7 @@ class ProbeApp(tk.Tk):
         self._bind_keyboard_controls()
         self.bind("<Configure>", self._on_window_configure)
         self.port_combo["values"] = (DEFAULT_SERIAL_PORT,)
+        self.refresh_ports()
         self.start_camera()
         self.after(300, self.connect_and_test_serial)
         self.after(RESULT_POLL_INTERVAL_MS, self._poll_result_queue)
@@ -4668,6 +4669,46 @@ class ProbeApp(tk.Tk):
         self.config_status_var.set(f"Saved {self.config_path.name}; camera restarted.")
         self.status_var.set("Camera config saved and applied.")
 
+    def _sync_autofocus_config_from_vars(self) -> None:
+        if not all(
+            hasattr(self, attribute)
+            for attribute in (
+                "autofocus_settle_ms_var",
+                "autofocus_sample_count_var",
+                "autofocus_peak_model_var",
+                "focus_threshold_yellow_vars",
+                "focus_threshold_green_vars",
+            )
+        ):
+            return
+
+        settle_ms = int(self.autofocus_settle_ms_var.get())
+        sample_count = int(self.autofocus_sample_count_var.get())
+        if settle_ms < 0:
+            raise ValueError("Settle after Z move must be non-negative.")
+        if sample_count <= 0:
+            raise ValueError("AF integration frames must be positive.")
+
+        yellow_thresholds: dict[str, float] = {}
+        green_thresholds: dict[str, float] = {}
+        for metric in ("Laplacian", "Tenengrad", "Brenner"):
+            yellow = float(self.focus_threshold_yellow_vars[metric].get())
+            green = float(self.focus_threshold_green_vars[metric].get())
+            if not math.isfinite(yellow) or not math.isfinite(green):
+                raise ValueError("Focus thresholds must be finite numbers.")
+            if yellow < 0 or green < 0:
+                raise ValueError("Focus thresholds must be non-negative.")
+            if green < yellow:
+                raise ValueError("Green focus threshold must be greater than or equal to yellow threshold.")
+            yellow_thresholds[metric] = yellow
+            green_thresholds[metric] = green
+
+        self.probe_config.autofocus_settle_ms = settle_ms
+        self.probe_config.autofocus_sample_count = sample_count
+        self.probe_config.autofocus_peak_model = self._autofocus_peak_model_from_label(self.autofocus_peak_model_var.get())
+        self.probe_config.focus_threshold_yellow.update(yellow_thresholds)
+        self.probe_config.focus_threshold_green.update(green_thresholds)
+
     def _camera_settings_from_config(self) -> CameraSettings:
         return CameraSettings(
             exposure_mode=self.probe_config.camera_exposure_mode,
@@ -5367,14 +5408,16 @@ class ProbeApp(tk.Tk):
         if not self.serial_client:
             return
         try:
+            self._sync_autofocus_config_from_vars()
             metric = self.focus_metric_var.get()
             initial_step = int(self.autofocus_step_var.get())
             min_step = int(self.autofocus_min_step_var.get())
             search_range = int(self.autofocus_max_moves_var.get())
             yellow_threshold = self._focus_yellow_threshold(metric)
             green_threshold = self._focus_green_threshold(metric)
-        except ValueError:
-            self.autofocus_status_var.set("AutoFocus settings must be integers.")
+        except ValueError as exc:
+            self.autofocus_status_var.set("AutoFocus settings invalid")
+            self.status_var.set(f"AutoFocus settings invalid: {exc}")
             return
         if initial_step <= 0 or min_step <= 0 or search_range <= 0:
             self.autofocus_status_var.set("AutoFocus settings must be positive.")
@@ -5585,12 +5628,79 @@ class ProbeApp(tk.Tk):
     def _autofocus_worker(self, metric: str, initial_step: int, min_step: int, search_range: int) -> None:
         assert self.serial_client is not None
         try:
-            self._run_autofocus_sequence(metric, initial_step, min_step, search_range, source="autofocus", status_event="autofocus_status")
+            self._run_autofocus_sequence_with_threshold_auto_adjustment(
+                metric,
+                initial_step,
+                min_step,
+                search_range,
+                source="autofocus",
+                status_event="autofocus_status",
+            )
         except Exception as exc:
             self.result_queue.put(("autofocus_error", exc))
         finally:
             self._write_autofocus_history_file()
             self.result_queue.put(("autofocus_done",))
+
+    def _run_autofocus_sequence_with_threshold_auto_adjustment(
+        self,
+        metric: str,
+        initial_step: int,
+        min_step: int,
+        search_range: int,
+        source: str = "autofocus",
+        status_event: str = "autofocus_status",
+    ) -> dict[str, float | int | bool]:
+        result = self._run_autofocus_sequence(metric, initial_step, min_step, search_range, source=source, status_event=status_event)
+        if not self._should_auto_adjust_focus_thresholds(result):
+            return result
+
+        best_score = float(result["best_score"])
+        yellow_threshold, green_threshold = self._auto_adjust_focus_thresholds(metric, best_score)
+        self.result_queue.put(
+            (
+                status_event,
+                f"Auto-adjusted {metric} thresholds from peak {best_score:.2f}: yellow {yellow_threshold:.2f}, green {green_threshold:.2f}. Re-running AutoFocus.",
+            )
+        )
+        if self._quick_autofocus_stop_requested():
+            result["stopped"] = True
+            return result
+        self._reset_autofocus_z_score_samples()
+        retry_result = self._run_autofocus_sequence(metric, initial_step, min_step, search_range, source=source, status_event=status_event)
+        retry_result["auto_threshold_adjusted"] = True
+        return retry_result
+
+    @staticmethod
+    def _should_auto_adjust_focus_thresholds(result: dict[str, float | int | bool]) -> bool:
+        return (
+            not bool(result.get("usable", False))
+            and not bool(result.get("threshold_passed", False))
+            and not bool(result.get("edge_limited", False))
+            and not bool(result.get("stopped", False))
+            and bool(result.get("peak_fit_available", False))
+            and float(result.get("best_score", 0.0)) > 0.0
+        )
+
+    def _auto_adjust_focus_thresholds(self, metric: str, best_score: float) -> tuple[float, float]:
+        yellow_threshold = max(0.0, float(best_score) * 0.4)
+        green_threshold = max(yellow_threshold, float(best_score) * 0.8)
+        self.probe_config.focus_threshold_yellow[metric] = yellow_threshold
+        self.probe_config.focus_threshold_green[metric] = green_threshold
+        config_path = getattr(self, "config_path", None)
+        if config_path is not None:
+            try:
+                save_probe_config(self.probe_config, config_path)
+            except Exception as exc:
+                logger.error("Failed to save auto-adjusted focus thresholds: %s", exc)
+        self.result_queue.put(("autofocus_thresholds_adjusted", metric, yellow_threshold, green_threshold, float(best_score)))
+        return yellow_threshold, green_threshold
+
+    def _reset_autofocus_z_score_samples(self) -> None:
+        with self.focus_lock:
+            self.autofocus_z_score_samples.clear()
+            self.autofocus_fine_range = None
+        self.result_queue.put(("autofocus_z_score_reset",))
 
     def _run_autofocus_sequence(
         self,
@@ -5673,7 +5783,8 @@ class ProbeApp(tk.Tk):
         fine_best_z, fine_best_score = max(fit_scores.items(), key=lambda item: item[1])
         boundary_margin = max(min_step, initial_step)
         best_near_edge = fine_best_z <= center_z - search_range + boundary_margin or fine_best_z >= center_z + search_range - boundary_margin
-        fitted_z = self._fit_focus_peak(fit_scores, self.probe_config.autofocus_peak_model)
+        fitted_model = self._fit_focus_peak_model(fit_scores, self.probe_config.autofocus_peak_model)
+        fitted_z = float(fitted_model["mu"]) if fitted_model is not None else self._fit_focus_peak(fit_scores, self.probe_config.autofocus_peak_model)
         result_z = int(round(fitted_z))
         result_z = max(lower_bound, min(upper_bound, result_z))
         threshold_passed = fine_best_score >= yellow_threshold
@@ -5698,6 +5809,7 @@ class ProbeApp(tk.Tk):
             "usable": result_is_usable,
             "threshold_passed": threshold_passed,
             "edge_limited": best_near_edge,
+            "peak_fit_available": fitted_model is not None,
             "stopped": self._quick_autofocus_stop_requested(),
         }
 
@@ -9562,7 +9674,7 @@ class ProbeApp(tk.Tk):
         initial_step = max(1, int(initial_step if initial_step is not None else self.autofocus_step_var.get()))
         min_step = max(1, int(min_step if min_step is not None else self.autofocus_min_step_var.get()))
         search_range = max(initial_step, int(search_range if search_range is not None else self.autofocus_max_moves_var.get()))
-        result = self._run_autofocus_sequence(metric, initial_step, min_step, search_range, source=source, status_event=status_event)
+        result = self._run_autofocus_sequence_with_threshold_auto_adjustment(metric, initial_step, min_step, search_range, source=source, status_event=status_event)
         return {
             "best_z": int(result["result_z"]),
             "best_score": float(result["best_score"]),
@@ -10482,7 +10594,9 @@ class ProbeApp(tk.Tk):
 
     def _apply_serial_ports(self, ports: list[str]) -> None:
         if self.serial_client and self.serial_client.is_open and self.serial_client.port not in ports:
-            ports.insert(0, self.serial_client.port)
+            logger.warning("Connected serial port %s is no longer detected; closing stale connection.", self.serial_client.port)
+            self.serial_client.close()
+            self.serial_client = None
 
         self.port_combo["values"] = ports
         current_port = self.port_var.get()
@@ -10505,12 +10619,20 @@ class ProbeApp(tk.Tk):
             self.status_var.set("Select a serial port first.")
             logger.warning("Serial connection skipped because no port is selected.")
             return False
+        if self.serial_client:
+            if self.serial_client.port == port and self.serial_client.is_open:
+                self.status_var.set(f"Connected to {port} at 115200,N,8,1.")
+                self._update_serial_port_style()
+                return True
+            self.serial_client.close()
+            self.serial_client = None
 
         try:
             self.serial_client = ControllerSerialClient(port)
             self.serial_client.set_admin_mode_enabled(self.admin_mode_enabled)
             self.serial_client.open()
         except Exception as exc:
+            self.serial_client = None
             self.status_var.set(f"Serial connection failed: {exc}")
             logger.error("Serial connection failed on %s: %s", port, exc)
             threading.Thread(target=self._refresh_ports_after_connect_failure, daemon=True).start()
@@ -11001,6 +11123,20 @@ class ProbeApp(tk.Tk):
             self.status_var.set(str(message))
             self._set_agent_status(str(message))
             logger.info("AutoFocus: %s", message)
+            return
+
+        if event_type == "autofocus_thresholds_adjusted":
+            _, metric, yellow_threshold, green_threshold, best_score = event
+            metric_name = str(metric)
+            self.focus_threshold_yellow_vars[metric_name].set(f"{float(yellow_threshold):g}")
+            self.focus_threshold_green_vars[metric_name].set(f"{float(green_threshold):g}")
+            self.config_status_var.set(f"Auto-adjusted {metric_name} thresholds from peak {float(best_score):.2f}.")
+            self._draw_focus_history()
+            self._draw_autofocus_z_score()
+            return
+
+        if event_type == "autofocus_z_score_reset":
+            self._draw_autofocus_z_score()
             return
 
         if event_type == "autofocus_sample":

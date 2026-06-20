@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+import queue
+import threading
 import unittest
+from unittest import mock
 
 from semi_auto_probe.app import ProbeApp
 from semi_auto_probe.config import (
     AUTOFOCUS_PEAK_MODEL_LORENTZIAN,
     AUTOFOCUS_PEAK_MODEL_PARABOLIC,
     AUTOFOCUS_PEAK_MODEL_PSEUDO_VOIGT,
+    ProbeConfig,
 )
+
+
+class DummyVar:
+    def __init__(self, value: str = "") -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
 
 
 class AutoFocusLogicTests(unittest.TestCase):
@@ -138,6 +153,254 @@ class AutoFocusLogicTests(unittest.TestCase):
         assert model is not None
         self.assertEqual(model["baseline"], 0.0)
         self.assertAlmostEqual(float(model["mu"]), 100.0, delta=1.0)
+
+    def test_threshold_auto_adjustment_retries_once_after_fitted_peak_below_threshold(self) -> None:
+        app = ProbeApp.__new__(ProbeApp)
+        app.probe_config = ProbeConfig()
+        app.config_path = None
+        app.result_queue = queue.Queue()
+        app.focus_lock = threading.Lock()
+        app.autofocus_z_score_samples = []
+        app.autofocus_fine_range = None
+        calls = []
+
+        def fake_run(metric: str, initial_step: int, min_step: int, search_range: int, source: str, status_event: str):
+            calls.append((metric, initial_step, min_step, search_range, source, status_event))
+            if len(calls) == 1:
+                return {
+                    "result_z": -9,
+                    "fine_best_z": -10,
+                    "best_score": 400.0,
+                    "usable": False,
+                    "threshold_passed": False,
+                    "edge_limited": False,
+                    "peak_fit_available": True,
+                    "stopped": False,
+                }
+            return {
+                "result_z": -9,
+                "fine_best_z": -10,
+                "best_score": 390.0,
+                "usable": True,
+                "threshold_passed": True,
+                "edge_limited": False,
+                "peak_fit_available": True,
+                "stopped": False,
+            }
+
+        app._run_autofocus_sequence = fake_run
+
+        result = ProbeApp._run_autofocus_sequence_with_threshold_auto_adjustment(
+            app,
+            "Laplacian",
+            initial_step=30,
+            min_step=5,
+            search_range=300,
+            source="autofocus",
+            status_event="autofocus_status",
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(result["usable"])
+        self.assertTrue(result["auto_threshold_adjusted"])
+        self.assertAlmostEqual(app.probe_config.focus_threshold_yellow["Laplacian"], 160.0)
+        self.assertAlmostEqual(app.probe_config.focus_threshold_green["Laplacian"], 320.0)
+        self.assertEqual(app.probe_config.focus_threshold_yellow["Tenengrad"], 20000.0)
+
+    def test_threshold_auto_adjustment_resets_z_score_plot_before_retry(self) -> None:
+        app = ProbeApp.__new__(ProbeApp)
+        app.probe_config = ProbeConfig()
+        app.config_path = None
+        app.result_queue = queue.Queue()
+        app.focus_lock = threading.Lock()
+        app.autofocus_z_score_samples = [{"z": 1, "score": 100.0, "stage": "fine"}]
+        app.autofocus_fine_range = (0, 2)
+        calls = []
+
+        def fake_run(metric: str, initial_step: int, min_step: int, search_range: int, source: str, status_event: str):
+            calls.append(
+                (
+                    list(app.autofocus_z_score_samples),
+                    app.autofocus_fine_range,
+                )
+            )
+            return {
+                "result_z": -9,
+                "fine_best_z": -10,
+                "best_score": 400.0,
+                "usable": len(calls) > 1,
+                "threshold_passed": len(calls) > 1,
+                "edge_limited": False,
+                "peak_fit_available": True,
+                "stopped": False,
+            }
+
+        app._run_autofocus_sequence = fake_run
+
+        ProbeApp._run_autofocus_sequence_with_threshold_auto_adjustment(
+            app,
+            "Laplacian",
+            initial_step=30,
+            min_step=5,
+            search_range=300,
+            source="autofocus",
+            status_event="autofocus_status",
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], ([{"z": 1, "score": 100.0, "stage": "fine"}], (0, 2)))
+        self.assertEqual(calls[1], ([], None))
+        self.assertTrue(any(event[0] == "autofocus_z_score_reset" for event in list(app.result_queue.queue)))
+
+    def test_threshold_auto_adjustment_does_not_retry_without_fitted_peak(self) -> None:
+        app = ProbeApp.__new__(ProbeApp)
+        app.probe_config = ProbeConfig()
+        app.config_path = None
+        app.result_queue = queue.Queue()
+        app.focus_lock = threading.Lock()
+        app.autofocus_z_score_samples = []
+        app.autofocus_fine_range = None
+        calls = []
+
+        def fake_run(metric: str, initial_step: int, min_step: int, search_range: int, source: str, status_event: str):
+            calls.append(metric)
+            return {
+                "result_z": 0,
+                "fine_best_z": 0,
+                "best_score": 400.0,
+                "usable": False,
+                "threshold_passed": False,
+                "edge_limited": False,
+                "peak_fit_available": False,
+                "stopped": False,
+            }
+
+        app._run_autofocus_sequence = fake_run
+
+        result = ProbeApp._run_autofocus_sequence_with_threshold_auto_adjustment(
+            app,
+            "Laplacian",
+            initial_step=30,
+            min_step=5,
+            search_range=300,
+            source="autofocus",
+            status_event="autofocus_status",
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(result["usable"])
+        self.assertEqual(app.probe_config.focus_threshold_yellow["Laplacian"], 1000.0)
+
+    def test_threshold_auto_adjustment_returns_failed_retry_result(self) -> None:
+        app = ProbeApp.__new__(ProbeApp)
+        app.probe_config = ProbeConfig()
+        app.config_path = None
+        app.result_queue = queue.Queue()
+        app.focus_lock = threading.Lock()
+        app.autofocus_z_score_samples = []
+        app.autofocus_fine_range = None
+        calls = []
+
+        def fake_run(metric: str, initial_step: int, min_step: int, search_range: int, source: str, status_event: str):
+            calls.append(metric)
+            return {
+                "result_z": 0,
+                "fine_best_z": search_range,
+                "best_score": 400.0,
+                "usable": False,
+                "threshold_passed": len(calls) > 1,
+                "edge_limited": len(calls) > 1,
+                "peak_fit_available": True,
+                "stopped": False,
+            }
+
+        app._run_autofocus_sequence = fake_run
+
+        result = ProbeApp._run_autofocus_sequence_with_threshold_auto_adjustment(
+            app,
+            "Laplacian",
+            initial_step=30,
+            min_step=5,
+            search_range=300,
+            source="autofocus",
+            status_event="autofocus_status",
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(result["usable"])
+        self.assertTrue(result["threshold_passed"])
+        self.assertTrue(result["edge_limited"])
+        self.assertTrue(result["auto_threshold_adjusted"])
+
+    def test_threshold_adjustment_event_updates_settings_vars(self) -> None:
+        app = ProbeApp.__new__(ProbeApp)
+        app.focus_threshold_yellow_vars = {
+            "Laplacian": DummyVar("1000"),
+            "Tenengrad": DummyVar("20000"),
+            "Brenner": DummyVar("1000"),
+        }
+        app.focus_threshold_green_vars = {
+            "Laplacian": DummyVar("2000"),
+            "Tenengrad": DummyVar("40000"),
+            "Brenner": DummyVar("2000"),
+        }
+        app.config_status_var = DummyVar("")
+        app._draw_focus_history = lambda: None
+        app._draw_autofocus_z_score = lambda: None
+
+        ProbeApp._handle_worker_event(app, ("autofocus_thresholds_adjusted", "Laplacian", 160.0, 320.0, 400.0))
+
+        self.assertEqual(app.focus_threshold_yellow_vars["Laplacian"].get(), "160")
+        self.assertEqual(app.focus_threshold_green_vars["Laplacian"].get(), "320")
+        self.assertIn("peak 400.00", app.config_status_var.get())
+
+    def test_start_autofocus_uses_visible_threshold_fields_after_auto_adjustment(self) -> None:
+        app = ProbeApp.__new__(ProbeApp)
+        app.autofocus_running = False
+        app.serial_client = object()
+        app.probe_config = ProbeConfig()
+        app.probe_config.focus_threshold_yellow["Laplacian"] = 145.425
+        app.probe_config.focus_threshold_green["Laplacian"] = 290.849
+        app.focus_metric_var = DummyVar("Laplacian")
+        app.autofocus_step_var = DummyVar("30")
+        app.autofocus_min_step_var = DummyVar("5")
+        app.autofocus_max_moves_var = DummyVar("300")
+        app.autofocus_settle_ms_var = DummyVar("100")
+        app.autofocus_sample_count_var = DummyVar("5")
+        app.autofocus_peak_model_var = DummyVar("Gaussian")
+        app.focus_threshold_yellow_vars = {
+            "Laplacian": DummyVar("1000"),
+            "Tenengrad": DummyVar("20000"),
+            "Brenner": DummyVar("1000"),
+        }
+        app.focus_threshold_green_vars = {
+            "Laplacian": DummyVar("2000"),
+            "Tenengrad": DummyVar("40000"),
+            "Brenner": DummyVar("2000"),
+        }
+        app.realtime_enabled = False
+        app.home_signal_enabled = False
+        app.focus_lock = threading.Lock()
+        app.autofocus_samples = []
+        app.autofocus_z_score_samples = []
+        app.autofocus_fine_range = None
+        app.autofocus_history_rows = []
+        app.focus_history = []
+        app.autofocus_stop_event = threading.Event()
+        app.status_var = DummyVar("")
+        app.autofocus_status_var = DummyVar("")
+        app._draw_autofocus_z_score = lambda: None
+        app._draw_focus_history = lambda: None
+        app._set_agent_status = lambda _message: None
+
+        with mock.patch("semi_auto_probe.app.threading.Thread") as thread:
+            thread.return_value.start.return_value = None
+            ProbeApp.start_autofocus(app)
+
+        self.assertEqual(app.probe_config.focus_threshold_yellow["Laplacian"], 1000.0)
+        self.assertEqual(app.probe_config.focus_threshold_green["Laplacian"], 2000.0)
+        self.assertEqual(app.autofocus_status_var.get(), "Running")
+        thread.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,10 @@
+import sys
+import types
 import unittest
+from unittest import mock
 
 from semi_auto_probe.protocol import FRAME_TAIL, RESPONSE_HEAD, Axis, build_clear_position_command, build_read_motion_parameters_command, checksum
-from semi_auto_probe.serial_client import ControllerSerialClient
+from semi_auto_probe.serial_client import ControllerSerialClient, list_serial_ports
 
 
 class FakeSerial:
@@ -56,7 +59,118 @@ def motion_parameters_response(axis: Axis, minimum_speed: int, work_speed: int, 
     return first_nine + bytes((checksum(first_nine),)) + FRAME_TAIL
 
 
+class FakePort:
+    def __init__(
+        self,
+        device: str,
+        description: str = "",
+        manufacturer: str = "",
+        hwid: str = "",
+    ) -> None:
+        self.device = device
+        self.description = description
+        self.manufacturer = manufacturer
+        self.hwid = hwid
+
+
+class FakeSerialException(Exception):
+    pass
+
+
+class OpenedSerial:
+    is_open = True
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+        self.is_open = False
+
+
+def patch_comports(ports: list[FakePort]):
+    serial_module = types.ModuleType("serial")
+    tools_module = types.ModuleType("serial.tools")
+    list_ports_module = types.ModuleType("serial.tools.list_ports")
+    list_ports_module.comports = lambda: ports
+    tools_module.list_ports = list_ports_module
+    serial_module.tools = tools_module
+    return mock.patch.dict(
+        sys.modules,
+        {
+            "serial": serial_module,
+            "serial.tools": tools_module,
+            "serial.tools.list_ports": list_ports_module,
+        },
+    )
+
+
+def fake_serial_module(serial_factory):
+    serial_module = types.ModuleType("serial")
+    serial_module.Serial = serial_factory
+    serial_module.SerialException = FakeSerialException
+    serial_module.EIGHTBITS = 8
+    serial_module.PARITY_NONE = "N"
+    serial_module.STOPBITS_ONE = 1
+    return serial_module
+
+
 class SerialClientTest(unittest.TestCase):
+    def test_list_serial_ports_prefers_usb_serial_adapter_over_bluetooth(self) -> None:
+        with patch_comports(
+            [
+                FakePort("COM3", description="Standard Serial over Bluetooth link", hwid="BTHENUM\\0000"),
+                FakePort("COM4", description="Standard Serial over Bluetooth link", hwid="BTHENUM\\0001"),
+                FakePort("COM8", description="USB-SERIAL CH340", manufacturer="wch.cn", hwid="USB\\VID_1A86&PID_7523"),
+            ]
+        ):
+            self.assertEqual(list_serial_ports(), ["COM8", "COM3", "COM4"])
+
+    def test_list_serial_ports_sorts_plain_com_ports_numerically(self) -> None:
+        with patch_comports(
+            [
+                FakePort("COM12", description="Communications Port"),
+                FakePort("COM2", description="Communications Port"),
+                FakePort("LPT1", description="Printer Port"),
+            ]
+        ):
+            self.assertEqual(list_serial_ports(), ["COM2", "COM12"])
+
+    def test_open_retries_ch340_configure_failure_with_warmup_and_rtscts(self) -> None:
+        calls = []
+
+        def serial_factory(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise FakeSerialException(
+                    "Cannot configure port, something went wrong. Original message: "
+                    "PermissionError(13, 'A device attached to the system is not functioning.', None, 31)"
+                )
+            return OpenedSerial()
+
+        client = ControllerSerialClient("COM8", timeout=1.0)
+        with mock.patch.dict(sys.modules, {"serial": fake_serial_module(serial_factory)}), mock.patch("semi_auto_probe.serial_client.time.sleep") as sleep:
+            client.open()
+
+        self.assertTrue(client.is_open)
+        self.assertEqual([call["baudrate"] for call in calls], [115200, 9600, 115200])
+        self.assertEqual([call.get("rtscts") for call in calls], [False, False, True])
+        sleep.assert_called_once_with(0.2)
+
+    def test_open_does_not_retry_unrelated_serial_exception(self) -> None:
+        calls = []
+
+        def serial_factory(**kwargs):
+            calls.append(kwargs)
+            raise FakeSerialException("Access is denied")
+
+        client = ControllerSerialClient("COM8", timeout=1.0)
+        with mock.patch.dict(sys.modules, {"serial": fake_serial_module(serial_factory)}):
+            with self.assertRaises(FakeSerialException):
+                client.open()
+
+        self.assertEqual(len(calls), 1)
+
     def test_position_reader_resynchronizes_after_fragment(self) -> None:
         client = ControllerSerialClient("COM_TEST", timeout=0.05)
         expected = position_response(Axis.Y, 20)
