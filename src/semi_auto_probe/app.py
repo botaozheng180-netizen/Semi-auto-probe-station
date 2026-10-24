@@ -18,6 +18,10 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from .ui.input_focus import install_input_focus
+from .ui.panel_scrolling import ScrollablePanel, install_panel_scrolling
+from .ui.neumorphic_theme import LIGHT, install as install_neumorphic_theme, recolor_widgets
+
 from .af_plane import (
     AFMeshPoint,
     SamplePlaneModel,
@@ -250,6 +254,7 @@ class ToggleSwitch(tk.Canvas):
             bd=0,
             highlightthickness=0,
             cursor="hand2",
+            takefocus=True,
         )
         self.variable = variable
         self.colors = colors
@@ -260,6 +265,8 @@ class ToggleSwitch(tk.Canvas):
         self.bind("<Button-1>", self._toggle)
         self.bind("<space>", self._toggle)
         self.bind("<Return>", self._toggle)
+        self.bind("<FocusIn>", lambda _event: self._draw())
+        self.bind("<FocusOut>", lambda _event: self._draw())
         self._draw()
 
     def _toggle(self, _event: tk.Event | None = None) -> str:
@@ -273,25 +280,34 @@ class ToggleSwitch(tk.Canvas):
         enabled = bool(self.variable.get())
         width = self.switch_width
         height = self.switch_height
-        radius = height / 2
-        track_fill = "#0f3b2d" if enabled else self.colors["surface_3"]
-        track_outline = "#1f7a5a" if enabled else self.colors["border"]
-        knob_fill = "#d1fae5" if enabled else self.colors["muted"]
-        self.create_oval(1, 1, 1 + height - 2, height - 1, fill=track_fill, outline=track_outline, width=1)
-        self.create_oval(width - height + 1, 1, width - 1, height - 1, fill=track_fill, outline=track_outline, width=1)
-        self.create_rectangle(radius, 1, width - radius, height - 1, fill=track_fill, outline=track_fill)
-        self.create_line(radius, 1, width - radius, 1, fill=track_outline)
-        self.create_line(radius, height - 1, width - radius, height - 1, fill=track_outline)
-        knob_radius = radius - 4
-        knob_center = width - radius if enabled else radius
-        self.create_oval(
-            knob_center - knob_radius,
-            radius - knob_radius,
-            knob_center + knob_radius,
-            radius + knob_radius,
-            fill=knob_fill,
-            outline=knob_fill,
-        )
+        key = (enabled, tuple(self.colors.items()), width, height)
+        if getattr(self, "_image_key", None) != key:
+            from PIL import Image, ImageDraw, ImageTk
+            light = self.colors["bg"] == LIGHT["bg"]
+            bright, shadow = ("#ffffff", "#b8bcc2") if light else ("#35485e", "#05080d")
+            scale = 3
+            image = Image.new("RGB", (width*scale, height*scale), self.colors["surface"])
+            draw = ImageDraw.Draw(image)
+            draw.rounded_rectangle((1*scale, 1*scale, (width-1)*scale, (height-1)*scale),
+                radius=height*scale//2, fill=shadow)
+            draw.rounded_rectangle((2*scale, 3*scale, (width-2)*scale, (height-1)*scale),
+                radius=height*scale//2, fill=bright)
+            draw.rounded_rectangle((2*scale, 3*scale, (width-2)*scale, (height-3)*scale),
+                radius=height*scale//2, fill=self.colors["input"])
+            x = width-height+3 if enabled else 3
+            draw.ellipse(((x+1)*scale, 4*scale, (x+height-4)*scale, (height-2)*scale), fill=shadow)
+            draw.ellipse((x*scale, 3*scale, (x+height-6)*scale, (height-3)*scale),
+                fill=self.colors["surface_2"], outline=bright, width=scale)
+            if enabled:
+                cx = (x+(height-6)/2)*scale
+                cy = height*scale/2
+                draw.ellipse((cx-2*scale, cy-2*scale, cx+2*scale, cy+2*scale), fill=self.colors["accent"])
+            self._switch_image = ImageTk.PhotoImage(image.resize((width, height), Image.Resampling.LANCZOS), master=self)
+            self._image_key = key
+        self.create_image(0, 0, anchor="nw", image=self._switch_image)
+        if self.focus_get() == self:
+            self.create_rectangle(1, 1, width-1, height-1, outline=self.colors["border_focus"])
+
 
 
 class IVPlotWindow:
@@ -1823,6 +1839,8 @@ class ProbeApp(tk.Tk):
         self.lift()
 
     def _configure_theme(self) -> None:
+        shared_colors = getattr(self, "colors", {})
+        previous_colors = shared_colors.copy()
         self.colors = {
             "bg": "#0b0f14",
             "surface": "#111821",
@@ -1841,6 +1859,19 @@ class ProbeApp(tk.Tk):
             "danger": "#fb7185",
         }
 
+        if not hasattr(self, "theme_mode"):
+            self.theme_mode = "dark"
+            try:
+                saved = json.loads(self.config_path.with_name("ui-theme.json").read_text())
+                if saved.get("mode") in ("light", "dark"):
+                    self.theme_mode = saved["mode"]
+            except (OSError, ValueError, AttributeError):
+                pass
+        if self.theme_mode == "light":
+            self.colors.update(LIGHT)
+        shared_colors.update(self.colors)
+        self.colors = shared_colors
+        self.configure(bg=self.colors["bg"])
         style = ttk.Style(self)
         style.theme_use("clam")
         style.configure(".", background=self.colors["bg"], foreground=self.colors["text"], font=("Segoe UI", 10))
@@ -1858,7 +1889,7 @@ class ProbeApp(tk.Tk):
         style.configure("Status.TLabel", background=self.colors["surface_2"], foreground=self.colors["accent"], font=("Segoe UI Semibold", 10))
         style.configure("Video.TLabel", background="#05070a", foreground=self.colors["muted"], font=("Segoe UI Semibold", 14))
         style.configure("TButton", background=self.colors["surface_3"], foreground=self.colors["text"], bordercolor=self.colors["border"], focusthickness=0, focuscolor=self.colors["border_focus"], relief="flat", borderwidth=1, padding=(11, 7))
-        style.map("TButton", background=[("active", "#223144"), ("pressed", "#1d2a3a"), ("disabled", "#111827")], foreground=[("disabled", "#64748b")], bordercolor=[("focus", self.colors["border_focus"])])
+        style.map("TButton", background=[("active", self.colors["surface_3"]), ("pressed", "#1d2a3a"), ("disabled", self.colors["surface"])], foreground=[("disabled", self.colors["muted"])], bordercolor=[("focus", self.colors["border_focus"])])
         style.configure("Accent.TButton", background="#0f3b2d", foreground="#d1fae5", bordercolor="#1f7a5a", padding=(12, 6))
         style.map("Accent.TButton", background=[("active", "#14543f"), ("pressed", "#0f3b2d")])
         style.configure("Danger.TButton", background="#4c0519", foreground="#ffe4e6", bordercolor="#be123c", padding=(12, 6))
@@ -1874,8 +1905,8 @@ class ProbeApp(tk.Tk):
         style.configure("TEntry", fieldbackground=self.colors["input"], background=self.colors["input"], foreground=self.colors["text"], bordercolor=self.colors["border"], lightcolor=self.colors["border"], darkcolor=self.colors["border"], insertcolor=self.colors["accent"], relief="flat", borderwidth=1, padding=(10, 7))
         style.map(
             "TEntry",
-            fieldbackground=[("focus", self.colors["input_focus"]), ("readonly", self.colors["input"]), ("disabled", "#101820"), ("!disabled", self.colors["input"])],
-            foreground=[("focus", self.colors["text"]), ("readonly", self.colors["text"]), ("disabled", "#64748b"), ("!disabled", self.colors["text"])],
+            fieldbackground=[("focus", self.colors["input_focus"]), ("readonly", self.colors["input"]), ("disabled", self.colors["surface_2"]), ("!disabled", self.colors["input"])],
+            foreground=[("focus", self.colors["text"]), ("readonly", self.colors["text"]), ("disabled", self.colors["muted"]), ("!disabled", self.colors["text"])],
             bordercolor=[("focus", self.colors["border_focus"]), ("invalid", "#fb7185"), ("!disabled", self.colors["border"])],
             lightcolor=[("focus", self.colors["border_focus"]), ("invalid", "#fb7185")],
             darkcolor=[("focus", self.colors["border_focus"]), ("invalid", "#fb7185")],
@@ -1883,9 +1914,9 @@ class ProbeApp(tk.Tk):
         style.configure("TCombobox", fieldbackground=self.colors["input"], background=self.colors["surface_3"], foreground=self.colors["text"], bordercolor=self.colors["border"], lightcolor=self.colors["border"], darkcolor=self.colors["border"], arrowcolor=self.colors["muted"], relief="flat", borderwidth=1, padding=(10, 7))
         style.map(
             "TCombobox",
-            fieldbackground=[("focus", self.colors["input_focus"]), ("readonly", self.colors["input"]), ("disabled", "#101820")],
-            foreground=[("readonly", self.colors["text"]), ("disabled", "#64748b")],
-            background=[("active", "#223144"), ("pressed", "#172536")],
+            fieldbackground=[("focus", self.colors["input_focus"]), ("readonly", self.colors["input"]), ("disabled", self.colors["surface_2"])],
+            foreground=[("readonly", self.colors["text"]), ("disabled", self.colors["muted"])],
+            background=[("active", self.colors["surface_3"]), ("pressed", self.colors["surface_2"])],
             bordercolor=[("focus", self.colors["border_focus"]), ("!disabled", self.colors["border"])],
             arrowcolor=[("active", self.colors["accent"]), ("focus", self.colors["accent"]), ("!disabled", self.colors["muted"])],
         )
@@ -1911,9 +1942,9 @@ class ProbeApp(tk.Tk):
         style.configure("TSpinbox", fieldbackground=self.colors["input"], background=self.colors["surface_3"], foreground=self.colors["text"], bordercolor=self.colors["border"], lightcolor=self.colors["border"], darkcolor=self.colors["border"], arrowcolor=self.colors["muted"], relief="flat", borderwidth=1, padding=(10, 7), arrowsize=14)
         style.map(
             "TSpinbox",
-            fieldbackground=[("focus", self.colors["input_focus"]), ("disabled", "#101820"), ("!disabled", self.colors["input"])],
-            foreground=[("disabled", "#64748b"), ("!disabled", self.colors["text"])],
-            background=[("active", "#223144"), ("pressed", "#172536")],
+            fieldbackground=[("focus", self.colors["input_focus"]), ("disabled", self.colors["surface_2"]), ("!disabled", self.colors["input"])],
+            foreground=[("disabled", self.colors["muted"]), ("!disabled", self.colors["text"])],
+            background=[("active", self.colors["surface_3"]), ("pressed", self.colors["surface_2"])],
             bordercolor=[("focus", self.colors["border_focus"]), ("invalid", "#fb7185"), ("!disabled", self.colors["border"])],
             arrowcolor=[("active", self.colors["accent"]), ("focus", self.colors["accent"]), ("!disabled", self.colors["muted"])],
         )
@@ -1937,8 +1968,8 @@ class ProbeApp(tk.Tk):
         style.map("Treeview", background=[("selected", "#0f766e")], foreground=[("selected", "#f8fafc")])
         style.configure(
             "FocusMap.Treeview",
-            background="#0f1722",
-            fieldbackground="#0f1722",
+            background=self.colors["input"],
+            fieldbackground=self.colors["input"],
             foreground=self.colors["text"],
             borderwidth=0,
             relief="flat",
@@ -1947,8 +1978,8 @@ class ProbeApp(tk.Tk):
         )
         style.configure(
             "FocusMap.Treeview.Heading",
-            background="#203044",
-            foreground="#e5edf5",
+            background=self.colors["surface_3"],
+            foreground=self.colors["text"],
             relief="flat",
             borderwidth=0,
             padding=(8, 8),
@@ -1959,7 +1990,7 @@ class ProbeApp(tk.Tk):
             background=[("selected", "#164e3d")],
             foreground=[("selected", "#d1fae5")],
         )
-        style.map("FocusMap.Treeview.Heading", background=[("active", "#293a50")])
+        style.map("FocusMap.Treeview.Heading", background=[("active", self.colors["surface_3"])])
         style.configure("Horizontal.TProgressbar", background=self.colors["accent"], troughcolor=self.colors["surface_2"], bordercolor=self.colors["border"])
         style.configure(
             "Slim.Vertical.TScrollbar",
@@ -1967,7 +1998,7 @@ class ProbeApp(tk.Tk):
             background="#334155",
             troughcolor=self.colors["surface"],
             bordercolor=self.colors["surface"],
-            arrowcolor="#64748b",
+            arrowcolor=self.colors["muted"],
             lightcolor="#334155",
             darkcolor="#334155",
             relief="flat",
@@ -1977,14 +2008,14 @@ class ProbeApp(tk.Tk):
         style.map(
             "Slim.Vertical.TScrollbar",
             background=[("active", "#475569"), ("pressed", "#38bdf8"), ("!disabled", "#334155")],
-            arrowcolor=[("active", self.colors["accent"]), ("!disabled", "#64748b")],
+            arrowcolor=[("active", self.colors["accent"]), ("!disabled", self.colors["muted"])],
         )
         style.configure("TCheckbutton", background=self.colors["surface"], foreground=self.colors["text"], indicatorcolor=self.colors["input"], indicatormargin=6, padding=(6, 4), focuscolor=self.colors["border_focus"])
         style.map(
             "TCheckbutton",
             background=[("active", self.colors["surface"])],
-            foreground=[("active", self.colors["text"]), ("disabled", "#64748b")],
-            indicatorcolor=[("selected", self.colors["accent"]), ("active", "#223144"), ("!selected", self.colors["input"])],
+            foreground=[("active", self.colors["text"]), ("disabled", self.colors["muted"])],
+            indicatorcolor=[("selected", self.colors["accent"]), ("active", self.colors["surface_3"]), ("!selected", self.colors["input"])],
             bordercolor=[("focus", self.colors["border_focus"])],
         )
         style.configure("TRadiobutton", background=self.colors["surface"], foreground=self.colors["text"], indicatorcolor=self.colors["input"], padding=(6, 4), focuscolor=self.colors["border_focus"])
@@ -1992,7 +2023,7 @@ class ProbeApp(tk.Tk):
         style.configure("TNotebook", background=self.colors["bg"], borderwidth=0, tabmargins=(0, 4, 0, 0))
         style.configure(
             "TNotebook.Tab",
-            background="#0f1722",
+            background=self.colors["input"],
             foreground=self.colors["muted"],
             padding=(14, 10),
             borderwidth=0,
@@ -2001,7 +2032,7 @@ class ProbeApp(tk.Tk):
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", "#172536"), ("active", self.colors["surface_3"])],
+            background=[("selected", self.colors["surface_2"]), ("active", self.colors["surface_3"])],
             foreground=[("selected", "#d1fae5"), ("active", self.colors["text"])],
         )
         style.configure("TLabelframe", background=self.colors["surface"], bordercolor=self.colors["border"])
@@ -2014,6 +2045,20 @@ class ProbeApp(tk.Tk):
         self.option_add("*TCombobox*Listbox.foreground", self.colors["text"])
         self.option_add("*TCombobox*Listbox.selectBackground", "#0e7490")
         self.option_add("*TCombobox*Listbox.selectForeground", "#f8fafc")
+
+        install_neumorphic_theme(self, self.colors, self.theme_mode)
+        if previous_colors:
+            recolor_widgets(self, previous_colors, self.colors)
+
+    def _toggle_theme(self) -> None:
+        self.theme_mode = "light" if self.theme_mode == "dark" else "dark"
+        self._configure_theme()
+        self.theme_button.configure(text="Light mode" if self.theme_mode == "dark" else "Dark mode")
+        try:
+            self.config_path.with_name("ui-theme.json").write_text(
+                json.dumps({"mode": self.theme_mode}), encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not save UI theme: %s", exc)
 
     @staticmethod
     def _integer_text_allowed(proposed: str, minimum: int | None = None, maximum: int | None = None) -> bool:
@@ -2212,7 +2257,7 @@ class ProbeApp(tk.Tk):
         content.columnconfigure(0, weight=1)
         content.rowconfigure(1, weight=1)
 
-        self.tab_buttons: dict[str, tk.Label] = {}
+        self.tab_buttons: dict[str, ttk.Button] = {}
         module_tab_labels = {
             "Main": "🏠 MainView",
             "AutoFocus": "🎯 AutoFocus",
@@ -2226,29 +2271,22 @@ class ProbeApp(tk.Tk):
         module_tab_labels["ImgMatrix"] = "🔳 ImgMatrix"
         module_tab_labels["AutoTest"] = "🧪 AutoTest"
         module_tab_labels["EdgeTrace"] = "\u26a1 EdgeTrace"
-        tab_bar = ttk.Frame(content, style="App.TFrame")
+        tab_bar = ttk.Frame(content, style="Panel.TFrame")
         tab_bar.grid(row=0, column=0, sticky="w")
+        self.theme_button = ttk.Button(tab_bar,
+            text="Light mode" if self.theme_mode == "dark" else "Dark mode",
+            command=self._toggle_theme, style="Ghost.TButton")
+        self.theme_button.grid(row=0, column=11, sticky="w", padx=(8, 0), pady=(0, 2))
         for col, name in enumerate(("Main", "AutoFocus", "FocusMap", "LayoutBond", "ImgStitch", "ImgMatrix", "AutoTest", "EdgeTrace", "AI Agent", "Communication", "Config")):
             tab_bar.columnconfigure(col, minsize=116, uniform="top_tabs")
-            label = tk.Label(
-                tab_bar,
-                text=module_tab_labels[name],
-                anchor="center",
-                bg="#17324a" if name == "Main" else "#132236",
-                fg="#f8fafc" if name == "Main" else "#c7d2e1",
-                font=("Segoe UI Emoji", 12),
-                padx=8,
-                pady=9,
-                bd=0,
-                highlightthickness=1,
-                highlightbackground="#22d3ee" if name == "Main" else "#31506b",
-                highlightcolor="#22d3ee",
-                cursor="hand2",
+            label = ttk.Button(
+                tab_bar, text=module_tab_labels[name], style="Navigation.TButton",
+                command=lambda page=name: self.show_page(page), cursor="hand2",
+                takefocus=True,
             )
             label.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 6, 0), pady=(0, 2))
-            label.bind("<Button-1>", lambda _event, page=name: self.show_page(page))
-            label.bind("<Enter>", lambda _event, page=name: self._set_tab_hover(page, True))
-            label.bind("<Leave>", lambda _event, page=name: self._set_tab_hover(page, False))
+            label.state(["selected"] if name == "Main" else ["!selected"])
+            label.bind("<Return>", lambda _event, page=name: self.show_page(page))
             self.tab_buttons[name] = label
 
         page_container = ttk.Frame(content, style="App.TFrame")
@@ -2297,6 +2335,8 @@ class ProbeApp(tk.Tk):
         self._update_config_display()
         self._update_admin_mode_controls()
         self._warm_page_layouts()
+        install_panel_scrolling(self, self.pages.values(), self.colors)
+        install_input_focus(self)
         self.show_page("Main")
 
     def show_page(self, name: str) -> None:
@@ -2318,22 +2358,14 @@ class ProbeApp(tk.Tk):
         self.active_page_name = name
         for page_name, button in self.tab_buttons.items():
             selected = page_name == name
-            button.configure(
-                bg="#17324a" if selected else "#132236",
-                fg="#f8fafc" if selected else "#c7d2e1",
-                highlightbackground="#22d3ee" if selected else "#31506b",
-            )
+            button.state(["selected"] if selected else ["!selected"])
         self.after_idle(lambda page_name=name: self._refresh_after_page_switch(page_name))
 
     def _set_tab_hover(self, name: str, is_hovered: bool) -> None:
         button = self.tab_buttons.get(name)
         if button is None or name == self.active_page_name:
             return
-        button.configure(
-            bg="#1b3651" if is_hovered else "#132236",
-            fg="#f8fafc" if is_hovered else "#c7d2e1",
-            highlightbackground="#4f7a9d" if is_hovered else "#31506b",
-        )
+        button.state(["active"] if is_hovered else ["!active"])
 
     def _warm_page_layouts(self) -> None:
         for page in self.pages.values():
@@ -2371,7 +2403,7 @@ class ProbeApp(tk.Tk):
         self.main_pane = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         self.main_pane.grid(row=0, column=0, sticky="nsew")
 
-        camera_panel = ttk.Frame(self.main_pane, style="Panel.TFrame", padding=12)
+        camera_panel = ScrollablePanel(self.main_pane, style="Raised.Panel.TFrame", padding=12)
         camera_panel.columnconfigure(0, weight=1)
         camera_panel.rowconfigure(1, weight=1)
 
@@ -2400,7 +2432,7 @@ class ProbeApp(tk.Tk):
             get_probe_assist_points=self.main_view_probe_assist_points,
         )
 
-        controls_panel = ttk.Frame(self.main_pane, style="Panel.TFrame", padding=10)
+        controls_panel = ScrollablePanel(self.main_pane, style="Raised.Panel.TFrame", padding=10)
         controls_panel.columnconfigure(0, weight=1)
         controls_panel.rowconfigure(3, weight=1)
 
@@ -2410,7 +2442,9 @@ class ProbeApp(tk.Tk):
         self.main_pane.add(camera_panel, weight=1)
         self.main_pane.add(controls_panel, weight=0)
         self.controls_panel = controls_panel
-        self.after_idle(self._set_initial_main_pane)
+        # Wait for the actual visible width; requested sizes while withdrawn
+        # can otherwise leave the right pane squeezed to almost zero width.
+        self.main_pane.bind("<Map>", lambda _event: self.after_idle(self._set_initial_main_pane), add="+")
 
     def _build_gds_stage_mapper_page(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -3095,10 +3129,13 @@ class ProbeApp(tk.Tk):
         return blockers
 
     def _set_initial_main_pane(self) -> None:
+        if self.__dict__.get("_main_pane_initialized", False):
+            return
         try:
             width = self.main_pane.winfo_width()
-            if width > 500:
+            if width > 500 and self.main_pane.winfo_ismapped():
                 self.main_pane.sashpos(0, max(width - 380, 520))
+                self._main_pane_initialized = True
         except tk.TclError:
             pass
 
@@ -3642,7 +3679,7 @@ class ProbeApp(tk.Tk):
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(2, weight=1)
 
-        command_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        command_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         command_panel.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         command_panel.columnconfigure(1, weight=1)
         ttk.Label(command_panel, text="MANUAL COMMAND", style="Section.TLabel").grid(row=0, column=0, sticky="w")
@@ -3680,7 +3717,7 @@ class ProbeApp(tk.Tk):
         self.comm_input.insert("1.0", hex_bytes(COMM_TEST_COMMAND))
         self.comm_input.bind("<Control-Return>", lambda _event: self.send_manual_command())
 
-        summary = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        summary = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         summary.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         summary.columnconfigure((0, 1), weight=1, uniform="comm_summary")
         ttk.Label(summary, text="LAST TX", style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
@@ -3688,7 +3725,7 @@ class ProbeApp(tk.Tk):
         ttk.Label(summary, textvariable=self.tx_var, style="Value.TLabel", wraplength=480, padding=10).grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(6, 0))
         ttk.Label(summary, textvariable=self.rx_var, style="Value.TLabel", wraplength=480, padding=10).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
 
-        history_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        history_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         history_panel.grid(row=2, column=0, sticky="nsew")
         history_panel.columnconfigure(0, weight=1)
         history_panel.rowconfigure(1, weight=1)
@@ -3729,7 +3766,7 @@ class ProbeApp(tk.Tk):
         parent.columnconfigure(1, weight=0)
         parent.rowconfigure(0, weight=1)
 
-        monitor_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        monitor_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         monitor_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         monitor_panel.columnconfigure(0, weight=1)
         monitor_panel.rowconfigure(1, weight=3)
@@ -3766,7 +3803,7 @@ class ProbeApp(tk.Tk):
         self.focus_canvas.grid(row=3, column=0, sticky="nsew")
         self.focus_canvas.bind("<Configure>", lambda _event: self._draw_focus_history())
 
-        control_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        control_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         control_panel.grid(row=0, column=1, sticky="ns")
         control_panel.columnconfigure(0, weight=1)
         ttk.Label(control_panel, text="AUTOFOCUS", style="Section.TLabel").grid(row=0, column=0, sticky="w")
@@ -3814,7 +3851,7 @@ class ProbeApp(tk.Tk):
         parent.columnconfigure(1, weight=0)
         parent.rowconfigure(0, weight=1)
 
-        result_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        result_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         result_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         result_panel.columnconfigure(0, weight=1)
         result_panel.rowconfigure(1, weight=2)
@@ -3903,7 +3940,7 @@ class ProbeApp(tk.Tk):
         self.af_plane_tree.configure(yscrollcommand=scrollbar.set)
         self._build_af_plane_eval_panel(table_panel)
 
-        control_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14, width=380)
+        control_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14, width=380)
         control_panel.grid(row=0, column=1, sticky="ns")
         control_panel.grid_propagate(False)
         control_panel.columnconfigure((0, 1), weight=1, uniform="af_plane_controls")
@@ -4102,7 +4139,7 @@ class ProbeApp(tk.Tk):
         parent.columnconfigure(1, weight=0)
         parent.rowconfigure(0, weight=1)
 
-        preview_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14)
+        preview_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14)
         preview_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         preview_panel.columnconfigure(0, weight=1)
         preview_panel.columnconfigure(1, weight=0, minsize=145)
@@ -4142,7 +4179,7 @@ class ProbeApp(tk.Tk):
         lower_panel.columnconfigure(0, weight=1)
         ttk.Label(lower_panel, textvariable=self.imgstitch_point_status_var, style="Value.TLabel", wraplength=460, padding=8).grid(row=0, column=0, sticky="ew")
 
-        control_panel = ttk.Frame(parent, style="Panel.TFrame", padding=14, width=360)
+        control_panel = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=14, width=360)
         control_panel.grid(row=0, column=1, sticky="ns")
         control_panel.grid_propagate(False)
         control_panel.columnconfigure((0, 1), weight=1, uniform="imgstitch_controls")
@@ -4356,7 +4393,7 @@ class ProbeApp(tk.Tk):
                 yscrollincrement=12,
             )
             scrollbar = ttk.Scrollbar(shell, orient=tk.VERTICAL, command=canvas.yview, style="Slim.Vertical.TScrollbar")
-            panel = ttk.Frame(canvas, style="Panel.TFrame", padding=16)
+            panel = ScrollablePanel(canvas, style="Raised.Panel.TFrame", padding=16)
             panel_window = canvas.create_window((0, 0), window=panel, anchor="nw")
             canvas.configure(yscrollcommand=scrollbar.set)
             canvas.grid(row=0, column=0, sticky="nsew")

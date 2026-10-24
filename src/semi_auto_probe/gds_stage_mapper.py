@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .ui.panel_scrolling import ScrollablePanel
+
 import importlib.util
 import json
 import math
@@ -1442,7 +1444,7 @@ class GDSStageMapperPanel:
         self.calibration_toggle_indicator: tk.Label | None = None
         self.calibration_content_frame: ttk.Frame | None = None
         self.layer_vars: dict[tuple[int, int], tk.BooleanVar] = {}
-        self.gds_point_buttons: dict[str, tk.Button] = {}
+        self.gds_point_buttons: dict[str, ttk.Button] = {}
         self.point_vars: dict[str, dict[str, tk.StringVar]] = {
             name: {
                 "u": tk.StringVar(value=""),
@@ -1468,12 +1470,12 @@ class GDSStageMapperPanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ttk.Frame(pane, style="Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
         viewer_panel.columnconfigure(0, weight=0, minsize=180)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
 
-        left_panel = ttk.Frame(viewer_panel, style="Panel.TFrame")
+        left_panel = ScrollablePanel(viewer_panel, raised=False)
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         left_panel.columnconfigure(0, weight=1)
         left_panel.rowconfigure(2, weight=1)
@@ -1494,14 +1496,11 @@ class GDSStageMapperPanel:
         )
         pane.add(viewer_panel, weight=1)
 
-        controls_outer = ttk.Frame(pane, style="Panel.TFrame")
+        controls_outer = ScrollablePanel(pane, style="Raised.Panel.TFrame")
         controls_outer.columnconfigure(0, weight=1)
         controls_outer.rowconfigure(0, weight=1)
         controls_canvas = tk.Canvas(controls_outer, bg=self.colors["surface"], highlightthickness=0, width=410)
-        scrollbar = ttk.Scrollbar(controls_outer, orient=tk.VERTICAL, command=controls_canvas.yview, style="Slim.Vertical.TScrollbar")
-        controls_canvas.configure(yscrollcommand=scrollbar.set)
         controls_canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar.grid(row=0, column=1, sticky="ns")
         controls = ttk.Frame(controls_canvas, style="Panel.TFrame", padding=12)
         controls_window = controls_canvas.create_window((0, 0), window=controls, anchor="nw")
         controls.bind("<Configure>", lambda event: controls_canvas.configure(scrollregion=controls_canvas.bbox("all")))
@@ -1841,7 +1840,7 @@ class GDSStageMapperPanel:
 
     def _build_calibration_section(self, parent: ttk.Frame, row: int) -> int:
         section = self._collapsible_section(parent, "Calibration Points", row, f"{len(self.POINT_NAMES)} point affine fit")
-        headings = ("Pt", "GDSu", "GDSv", "Peak", "x", "y", "Stage")
+        headings = ("Pt", "GDSu", "GDSv", "Pick", "x", "y", "Pick/Move")
         for col, heading in enumerate(headings):
             ttk.Label(section, text=heading, style="Muted.TLabel").grid(row=0, column=col, sticky="w", padx=(0, 5))
         for col in (1, 2, 4, 5):
@@ -1851,20 +1850,8 @@ class GDSStageMapperPanel:
             ttk.Label(section, text=name, style="Panel.TLabel").grid(row=row_index, column=0, sticky="w", padx=(0, 5), pady=(5, 0))
             for col, key in ((1, "u"), (2, "v")):
                 ttk.Entry(section, textvariable=self.point_vars[name][key], width=5).grid(row=row_index, column=col, sticky="ew", padx=(0, 4), pady=(5, 0))
-            set_gds_button = tk.Button(
-                section,
-                text="Peak",
-                command=lambda point=name: self._arm_gds_point_capture(point),
-                bg=self.colors["surface_3"],
-                fg=self.colors["text"],
-                activebackground="#223144",
-                activeforeground=self.colors["text"],
-                relief="flat",
-                bd=0,
-                padx=4,
-                pady=5,
-                font=("Segoe UI", 9),
-                cursor="hand2",
+            set_gds_button = self._calibration_icon_button(
+                section, "✔", lambda point=name: self._arm_gds_point_capture(point),
             )
             set_gds_button.grid(row=row_index, column=3, sticky="ew", padx=(0, 4), pady=(5, 0))
             self.gds_point_buttons[name] = set_gds_button
@@ -1885,23 +1872,9 @@ class GDSStageMapperPanel:
             ).grid(row=0, column=1, sticky="ew")
         return row + 1
 
-    def _calibration_icon_button(self, parent: tk.Widget, text: str, command: Callable[[], None]) -> tk.Button:
-        return tk.Button(
-            parent,
-            text=text,
-            command=command,
-            bg=self.colors["surface_3"],
-            fg=self.colors["text"],
-            activebackground="#223144",
-            activeforeground=self.colors["text"],
-            relief="flat",
-            bd=0,
-            width=2,
-            padx=3,
-            pady=4,
-            font=("Segoe UI Symbol", 10, "bold"),
-            cursor="hand2",
-        )
+    def _calibration_icon_button(self, parent: tk.Widget, text: str, command: Callable[[], None]) -> ttk.Button:
+        return ttk.Button(parent, text=text, command=command,
+                          style="Calibration.TButton", width=2, cursor="hand2")
 
     def _build_mapping_section(self, parent: ttk.Frame, row: int) -> int:
         section = self._section(parent, "Mapping", row)
@@ -2065,16 +2038,11 @@ class GDSStageMapperPanel:
         self._reset_gds_point_buttons()
         button = self.gds_point_buttons.get(point_name)
         if button is not None:
-            button.configure(bg="#f59e0b", fg="#111827", activebackground="#fbbf24", activeforeground="#111827")
+            button.state(["selected"])
 
     def _reset_gds_point_buttons(self) -> None:
         for button in self.gds_point_buttons.values():
-            button.configure(
-                bg=self.colors["surface_3"],
-                fg=self.colors["text"],
-                activebackground="#223144",
-                activeforeground=self.colors["text"],
-            )
+            button.state(["!selected"])
 
     def _set_point_stage_from_current(self, point_name: str) -> None:
         try:

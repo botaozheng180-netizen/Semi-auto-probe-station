@@ -9,6 +9,7 @@ description = "RS-232 three-axis motor controller scaffold with USB camera previ
 requires-python = ">=3.10"
 dependencies = [
   "pyserial>=3.5",
+  "Pillow>=10.0",
   "opencv-python>=4.8",
   "numpy>=1.26",
   "matplotlib>=3.8",

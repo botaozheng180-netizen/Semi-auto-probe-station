@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .ui.panel_scrolling import ScrollablePanel
+
 import math
 import tkinter as tk
 from collections.abc import Callable
@@ -348,12 +350,12 @@ class EdgeTracePanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ttk.Frame(pane, style="Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
         viewer_panel.columnconfigure(0, weight=0, minsize=210)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
 
-        left_panel = ttk.Frame(viewer_panel, style="Panel.TFrame")
+        left_panel = ScrollablePanel(viewer_panel, raised=False)
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         left_panel.columnconfigure(0, weight=1)
         self._build_left_panel(left_panel)
@@ -372,7 +374,7 @@ class EdgeTracePanel:
         self._update_snap_grid(update_status=False)
         pane.add(viewer_panel, weight=1)
 
-        controls_shell = ttk.Frame(pane, style="Panel.TFrame")
+        controls_shell = ScrollablePanel(pane, style="Raised.Panel.TFrame")
         controls_shell.columnconfigure(0, weight=1)
         controls_shell.rowconfigure(0, weight=1)
         controls_canvas = tk.Canvas(

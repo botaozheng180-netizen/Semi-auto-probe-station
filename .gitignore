@@ -56,3 +56,6 @@ src/semi_auto_probe/homepage/
 
 # Local manual instrument recordings
 /manualtest_session/
+
+# Per-machine interface preference
+/ui-theme.json

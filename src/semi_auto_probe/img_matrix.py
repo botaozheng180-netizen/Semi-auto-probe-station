@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .ui.panel_scrolling import ScrollablePanel
+
 import math
 import re
 import tkinter as tk
@@ -248,12 +250,12 @@ class ImgMatrixPanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ttk.Frame(pane, style="Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
         viewer_panel.columnconfigure(0, weight=0, minsize=180)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
 
-        left_panel = ttk.Frame(viewer_panel, style="Panel.TFrame")
+        left_panel = ScrollablePanel(viewer_panel, raised=False)
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         left_panel.columnconfigure(0, weight=1)
         self._build_left_panel(left_panel)
@@ -270,7 +272,7 @@ class ImgMatrixPanel:
         )
         pane.add(viewer_panel, weight=1)
 
-        controls = ttk.Frame(pane, style="Panel.TFrame", padding=12)
+        controls = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=12)
         controls.columnconfigure(0, weight=1)
         self._build_controls(controls)
         pane.add(controls, weight=0)

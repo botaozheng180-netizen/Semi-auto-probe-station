@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .panel_scrolling import ScrollablePanel
+
 import re
 import math
 import threading
@@ -191,7 +193,7 @@ class AgentPanel:
         self.confirm_button.grid(row=1, column=1, sticky="e", padx=(0, 6))
         ttk.Button(self.chat_action_frame, text="Cancel Plan", command=self.cancel_pending_plan).grid(row=1, column=2, sticky="e")
 
-        composer = ttk.Frame(center, style="Panel.TFrame", padding=10)
+        composer = ScrollablePanel(center, style="Raised.Panel.TFrame", padding=10)
         composer.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         composer.columnconfigure(0, weight=1)
         composer.columnconfigure(1, weight=0)
@@ -287,7 +289,7 @@ class AgentPanel:
             self.input_text.focus_set()
 
     def _section(self, parent: tk.Widget, title: str) -> ttk.Frame:
-        frame = ttk.Frame(parent, style="Panel.TFrame", padding=10)
+        frame = ScrollablePanel(parent, style="Raised.Panel.TFrame", padding=10)
         frame.columnconfigure(0, weight=1)
         ttk.Label(frame, text=title.upper(), style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         return frame

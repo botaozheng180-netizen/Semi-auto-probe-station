@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .ui.panel_scrolling import ScrollablePanel
+
 import csv
 import io
 import json
@@ -71,7 +73,7 @@ class MappingPanel(ttk.Frame):
         self.measurement_var = measurement_var or tk.StringVar(value="Measurement flow: not configured")
         self.left_status = MappingStatusPanel(self, self, colors)
         self.left_status.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        center = ttk.Frame(self)
+        center = ScrollablePanel(self, style="Raised.Panel.TFrame")
         center.grid(row=0,column=1,sticky="nsew")
         center.columnconfigure(0,weight=1); center.rowconfigure(1,weight=1)
         toolbar=ttk.Frame(center); toolbar.grid(row=0,column=0,sticky="ew",pady=(0,6))
@@ -113,7 +115,7 @@ class MappingPanel(ttk.Frame):
         self.draw_hint_label.grid(row=2, column=0, columnspan=2, sticky="ew")
         self.draw_hint_label.grid_remove()
         self.columnconfigure(2, minsize=self.REGION_SIDEBAR_WIDTH + 18)
-        right=ttk.Frame(self); right.grid(row=0,column=2,sticky="nsew",padx=(10,0))
+        right=ScrollablePanel(self, style="Raised.Panel.TFrame"); right.grid(row=0,column=2,sticky="nsew",padx=(10,0))
         right.columnconfigure(0,weight=1)
         right.rowconfigure(0,weight=1)
         self.region_sidebar = right
