@@ -18,8 +18,11 @@ from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from .ui.navigation_icons import install_navigation_icon
+from .ui.rolling_description import RollingDescription
+from .ui.toggle_switch import ToggleSwitch
 from .ui.input_focus import install_input_focus
-from .ui.panel_scrolling import ScrollablePanel, install_panel_scrolling
+from .ui.panel_scrolling import ScrollablePanel, fit_right_pane, install_panel_scrolling
 from .ui.neumorphic_theme import LIGHT, install as install_neumorphic_theme, recolor_widgets
 
 from .af_plane import (
@@ -232,82 +235,6 @@ def is_high_frequency_dp100_status(message: str) -> bool:
     ))
 ADMIN_TOKEN_ENV = "SEMI_AUTO_PROBE_ADMIN_TOKEN"
 WEB_ACCESS_TOKEN_ENV = "SEMI_AUTO_PROBE_WEB_TOKEN"
-
-
-class ToggleSwitch(tk.Canvas):
-    def __init__(
-        self,
-        parent: tk.Widget,
-        variable: tk.BooleanVar,
-        colors: dict[str, str],
-        *,
-        command: Callable[[], None] | None = None,
-        background: str | None = None,
-        width: int = 44,
-        height: int = 24,
-    ) -> None:
-        super().__init__(
-            parent,
-            width=width,
-            height=height,
-            bg=background or colors["surface"],
-            bd=0,
-            highlightthickness=0,
-            cursor="hand2",
-            takefocus=True,
-        )
-        self.variable = variable
-        self.colors = colors
-        self.command = command
-        self.switch_width = width
-        self.switch_height = height
-        self.variable.trace_add("write", lambda *_args: self._draw())
-        self.bind("<Button-1>", self._toggle)
-        self.bind("<space>", self._toggle)
-        self.bind("<Return>", self._toggle)
-        self.bind("<FocusIn>", lambda _event: self._draw())
-        self.bind("<FocusOut>", lambda _event: self._draw())
-        self._draw()
-
-    def _toggle(self, _event: tk.Event | None = None) -> str:
-        self.variable.set(not bool(self.variable.get()))
-        if self.command is not None:
-            self.command()
-        return "break"
-
-    def _draw(self) -> None:
-        self.delete("all")
-        enabled = bool(self.variable.get())
-        width = self.switch_width
-        height = self.switch_height
-        key = (enabled, tuple(self.colors.items()), width, height)
-        if getattr(self, "_image_key", None) != key:
-            from PIL import Image, ImageDraw, ImageTk
-            light = self.colors["bg"] == LIGHT["bg"]
-            bright, shadow = ("#ffffff", "#b8bcc2") if light else ("#35485e", "#05080d")
-            scale = 3
-            image = Image.new("RGB", (width*scale, height*scale), self.colors["surface"])
-            draw = ImageDraw.Draw(image)
-            draw.rounded_rectangle((1*scale, 1*scale, (width-1)*scale, (height-1)*scale),
-                radius=height*scale//2, fill=shadow)
-            draw.rounded_rectangle((2*scale, 3*scale, (width-2)*scale, (height-1)*scale),
-                radius=height*scale//2, fill=bright)
-            draw.rounded_rectangle((2*scale, 3*scale, (width-2)*scale, (height-3)*scale),
-                radius=height*scale//2, fill=self.colors["input"])
-            x = width-height+3 if enabled else 3
-            draw.ellipse(((x+1)*scale, 4*scale, (x+height-4)*scale, (height-2)*scale), fill=shadow)
-            draw.ellipse((x*scale, 3*scale, (x+height-6)*scale, (height-3)*scale),
-                fill=self.colors["surface_2"], outline=bright, width=scale)
-            if enabled:
-                cx = (x+(height-6)/2)*scale
-                cy = height*scale/2
-                draw.ellipse((cx-2*scale, cy-2*scale, cx+2*scale, cy+2*scale), fill=self.colors["accent"])
-            self._switch_image = ImageTk.PhotoImage(image.resize((width, height), Image.Resampling.LANCZOS), master=self)
-            self._image_key = key
-        self.create_image(0, 0, anchor="nw", image=self._switch_image)
-        if self.focus_get() == self:
-            self.create_rectangle(1, 1, width-1, height-1, outline=self.colors["border_focus"])
-
 
 
 class IVPlotWindow:
@@ -2199,14 +2126,19 @@ class ProbeApp(tk.Tk):
         header = ttk.Frame(self, style="App.TFrame", padding=(18, 12, 18, 8))
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Semi Auto Probe", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="3-axis RS-232 motion control with synchronized USB vision", style="Subtitle.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self.app_title_label = ttk.Label(header, text="Semi Auto Probe", style="Title.TLabel")
+        self.app_title_label.grid(row=0, column=0, sticky="w")
+        header.columnconfigure(0, minsize=self.app_title_label.winfo_reqwidth())
+        self.rolling_description = RollingDescription(header,
+            "3-axis RS-232 motion control with synchronized USB vision", self.colors,
+            width=self.app_title_label.winfo_reqwidth())
+        self.rolling_description.grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-        toolbar = ttk.Frame(header, style="Toolbar.TFrame", padding=(10, 8))
-        toolbar.grid(row=0, column=1, rowspan=2, sticky="e", padx=(16, 0))
+        toolbar = ttk.Frame(header, style="Toolbar.TFrame", padding=(8, 8, 0, 8))
+        toolbar.grid(row=0, column=1, rowspan=2, sticky="e", padx=(8, 0))
 
         probe_group = ttk.Frame(toolbar, style="Toolbar.TFrame")
-        probe_group.grid(row=0, column=0, sticky="w", padx=(0, 14))
+        probe_group.grid(row=0, column=0, sticky="w", padx=(0, 4))
         ttk.Label(probe_group, text="PROBE", style="Muted.TLabel").grid(row=0, column=0, padx=(0, 6))
         ToggleSwitch(
             probe_group,
@@ -2217,7 +2149,7 @@ class ProbeApp(tk.Tk):
             width=42,
             height=22,
         ).grid(row=0, column=1, sticky="w", padx=(0, 5))
-        ttk.Label(probe_group, textvariable=self.probe_down_state_var, style="Muted.TLabel", width=9, anchor="w").grid(row=0, column=2)
+        ttk.Label(probe_group, textvariable=self.probe_down_state_var, style="Muted.TLabel", anchor="w").grid(row=0, column=2)
 
         serial_group = ttk.Frame(toolbar, style="Toolbar.TFrame")
         serial_group.grid(row=0, column=1, sticky="w", padx=(0, 14))
@@ -2250,7 +2182,8 @@ class ProbeApp(tk.Tk):
         self.camera_index_spinbox = ttk.Combobox(camera_group, textvariable=self.camera_index_var, values=camera_source_choices(), width=15)
         self.camera_index_spinbox.grid(row=0, column=1, padx=(0, 6), ipady=1)
         ttk.Button(camera_group, text="Restart", command=self.restart_camera).grid(row=0, column=2)
-        ttk.Button(toolbar, text="EMERGENCY STOP", style="Danger.TButton", command=self.emergency_stop).grid(row=0, column=3)
+        self.emergency_stop_button = ttk.Button(toolbar, text="EMERGENCY STOP", style="Danger.TButton", command=self.emergency_stop)
+        self.emergency_stop_button.grid(row=0, column=3)
 
         content = ttk.Frame(self, style="App.TFrame")
         content.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 14))
@@ -2272,21 +2205,23 @@ class ProbeApp(tk.Tk):
         module_tab_labels["AutoTest"] = "🧪 AutoTest"
         module_tab_labels["EdgeTrace"] = "\u26a1 EdgeTrace"
         tab_bar = ttk.Frame(content, style="Panel.TFrame")
-        tab_bar.grid(row=0, column=0, sticky="w")
+        tab_bar.grid(row=0, column=0, sticky="ew")
         self.theme_button = ttk.Button(tab_bar,
             text="Light mode" if self.theme_mode == "dark" else "Dark mode",
             command=self._toggle_theme, style="Ghost.TButton")
-        self.theme_button.grid(row=0, column=11, sticky="w", padx=(8, 0), pady=(0, 2))
+        self.theme_button.grid(row=0, column=11, sticky="e", padx=(8, 0), pady=(0, 2))
         for col, name in enumerate(("Main", "AutoFocus", "FocusMap", "LayoutBond", "ImgStitch", "ImgMatrix", "AutoTest", "EdgeTrace", "AI Agent", "Communication", "Config")):
-            tab_bar.columnconfigure(col, minsize=116, uniform="top_tabs")
+            tab_bar.columnconfigure(col, minsize=100, weight=1)
+            icon, caption = module_tab_labels[name].split(" ", 1)
             label = ttk.Button(
-                tab_bar, text=module_tab_labels[name], style="Navigation.TButton",
+                tab_bar, text=caption, style="Navigation.TButton",
                 command=lambda page=name: self.show_page(page), cursor="hand2",
                 takefocus=True,
             )
             label.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 6, 0), pady=(0, 2))
             label.state(["selected"] if name == "Main" else ["!selected"])
             label.bind("<Return>", lambda _event, page=name: self.show_page(page))
+            install_navigation_icon(label, icon, self.colors)
             self.tab_buttons[name] = label
 
         page_container = ttk.Frame(content, style="App.TFrame")
@@ -2403,7 +2338,7 @@ class ProbeApp(tk.Tk):
         self.main_pane = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         self.main_pane.grid(row=0, column=0, sticky="nsew")
 
-        camera_panel = ScrollablePanel(self.main_pane, style="Raised.Panel.TFrame", padding=12)
+        camera_panel = ScrollablePanel(self.main_pane, style="Raised.Panel.TFrame", padding=12, fit_width=True)
         camera_panel.columnconfigure(0, weight=1)
         camera_panel.rowconfigure(1, weight=1)
 
@@ -2434,7 +2369,7 @@ class ProbeApp(tk.Tk):
 
         controls_panel = ScrollablePanel(self.main_pane, style="Raised.Panel.TFrame", padding=10)
         controls_panel.columnconfigure(0, weight=1)
-        controls_panel.rowconfigure(3, weight=1)
+        controls_panel.rowconfigure(3, weight=0)
 
         self._build_position_panel(controls_panel)
         self._build_axis_control_panel(controls_panel)
@@ -2444,7 +2379,7 @@ class ProbeApp(tk.Tk):
         self.controls_panel = controls_panel
         # Wait for the actual visible width; requested sizes while withdrawn
         # can otherwise leave the right pane squeezed to almost zero width.
-        self.main_pane.bind("<Map>", lambda _event: self.after_idle(self._set_initial_main_pane), add="+")
+        fit_right_pane(self.main_pane, controls_panel)
 
     def _build_gds_stage_mapper_page(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -2500,7 +2435,6 @@ class ProbeApp(tk.Tk):
         self.mapping_running = False
         self.wire_bond_enabled_var = tk.BooleanVar(value=self.probe_config.wire_bond_enabled)
         workflow_bar = ttk.Frame(parent, padding=8)
-        workflow_bar.grid(row=0, column=0, sticky="ew")
         workflow_bar.columnconfigure(1, weight=1)
         self.autotest_mode_label = ttk.Label(workflow_bar)
         self.autotest_mode_label.grid(row=0, column=0, padx=(0, 15))
@@ -3870,11 +3804,11 @@ class ProbeApp(tk.Tk):
 
         for column, title in enumerate(("MESH", "REALTIME", "AF SCATTER / FIT")):
             ttk.Label(top_panel, text=title, style="Section.TLabel").grid(row=0, column=column, sticky="w", padx=(0 if column == 0 else 8, 0), pady=(0, 6))
-        self.focusmap_mesh_canvas = tk.Canvas(top_panel, bg="#071018", highlightthickness=1, highlightbackground="#334155")
+        self.focusmap_mesh_canvas = tk.Canvas(top_panel, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground="#334155")
         self.focusmap_mesh_canvas.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
         self.focusmap_mesh_canvas.bind("<Configure>", lambda _event: self._draw_af_plane_mesh())
         self.focusmap_mesh_canvas.bind("<Button-1>", self._on_focusmap_mesh_click)
-        self.focusmap_realtime_canvas = tk.Canvas(top_panel, bg="#071018", highlightthickness=1, highlightbackground="#334155")
+        self.focusmap_realtime_canvas = tk.Canvas(top_panel, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground="#334155")
         self.focusmap_realtime_canvas.grid(row=1, column=1, sticky="nsew", padx=(4, 4))
         self.focusmap_realtime_canvas.bind("<Configure>", lambda _event: self._draw_focusmap_realtime())
         self.focusmap_af_canvas = tk.Canvas(top_panel, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground="#334155")
@@ -4149,7 +4083,7 @@ class ProbeApp(tk.Tk):
         header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text="IMG STITCH MOSAIC", style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        self.imgstitch_mosaic_canvas = tk.Canvas(preview_panel, bg="#05070a", highlightthickness=0)
+        self.imgstitch_mosaic_canvas = tk.Canvas(preview_panel, bg=self.colors["surface_2"], highlightthickness=0)
         self.imgstitch_mosaic_canvas.grid(row=1, column=0, sticky="nsew")
         self.imgstitch_mosaic_canvas.create_text(20, 20, text="No mosaic yet", anchor="nw", fill=self.colors["muted"], font=("Segoe UI Semibold", 14))
         self.imgstitch_mosaic_canvas.bind("<MouseWheel>", self._on_imgstitch_preview_wheel)
@@ -4167,7 +4101,7 @@ class ProbeApp(tk.Tk):
         ttk.Label(diagnostic_panel, text="STITCH EVALUATION", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(diagnostic_panel, textvariable=self.imgstitch_quality_var, style="Status.TLabel", wraplength=130, padding=6).grid(row=1, column=0, sticky="ew", pady=(6, 10))
         ttk.Label(diagnostic_panel, text="DISPLACEMENT", style="Section.TLabel").grid(row=2, column=0, sticky="nw")
-        self.imgstitch_scatter_canvas = tk.Canvas(diagnostic_panel, bg="#071018", highlightthickness=1, highlightbackground="#334155", width=145, height=190)
+        self.imgstitch_scatter_canvas = tk.Canvas(diagnostic_panel, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground="#334155", width=145, height=190)
         self.imgstitch_scatter_canvas.grid(row=3, column=0, sticky="nsew", pady=(6, 12))
         self.imgstitch_scatter_canvas.bind("<Configure>", lambda _event: self._render_imgstitch_scatter())
         ttk.Label(diagnostic_panel, text="LIVE CAMERA", style="Section.TLabel").grid(row=4, column=0, sticky="w")
@@ -6259,6 +6193,9 @@ class ProbeApp(tk.Tk):
         }
 
     def _draw_af_z_score_plot(self, canvas: tk.Canvas, compact: bool = False) -> None:
+        # Canvas primitives retain their own colors after the canvas background
+        # changes. Rebuild this plot when the application palette changes.
+        canvas._theme_redraw = lambda: self._draw_af_z_score_plot(canvas, compact)
         width = max(canvas.winfo_width(), 10)
         height = max(canvas.winfo_height(), 10)
         canvas.delete("all")
@@ -8077,6 +8014,8 @@ class ProbeApp(tk.Tk):
         if not hasattr(self, "focusmap_mesh_canvas"):
             return
         canvas = self.focusmap_mesh_canvas
+        canvas._theme_redraw = self._draw_af_plane_mesh
+        canvas.configure(bg=self.colors["surface_2"])
         canvas.delete("all")
         self.af_plane_mesh_hitboxes = []
         records = self.af_plane_results
@@ -8099,7 +8038,7 @@ class ProbeApp(tk.Tk):
         plot_w = max(1, width - padding * 2)
         plot_h = max(1, height - padding * 2)
         canvas.create_rectangle(padding, padding, width - padding, height - padding, outline="#334155")
-        canvas.create_text(padding, 12, text="Mesh status", anchor="nw", fill="#cbd5e1", font=("Segoe UI Semibold", 10))
+        canvas.create_text(padding, 12, text="Mesh status", anchor="nw", fill=self.colors["text"], font=("Segoe UI Semibold", 10))
         status_colors = {
             "pending": "#64748b",
             "running": "#fbbf24",
@@ -8115,7 +8054,7 @@ class ProbeApp(tk.Tk):
             selected = self.af_plane_selected_index == int(record.get("index", 0))
             if selected:
                 canvas.create_oval(px - radius - 5, py - radius - 5, px + radius + 5, py + radius + 5, fill="", outline="#38bdf8", width=2)
-            outline = "#e5edf5" if status == "running" else ("#38bdf8" if selected else color)
+            outline = self.colors["text"] if status == "running" else ("#38bdf8" if selected else color)
             if not bool(record.get("fit_enabled", True)):
                 outline = "#94a3b8"
             canvas.create_oval(px - radius, py - radius, px + radius, py + radius, fill=color, outline=outline, width=2 if selected else 1)
@@ -8123,7 +8062,7 @@ class ProbeApp(tk.Tk):
                 canvas.create_line(px - radius - 2, py + radius + 2, px + radius + 2, py - radius - 2, fill="#94a3b8", width=2)
             self.af_plane_mesh_hitboxes.append((px, py, max(10.0, radius + 5.0), record))
             if len(records) <= 25:
-                canvas.create_text(px + 8, py - 8, text=str(record["index"]), anchor="w", fill="#cbd5e1", font=("Segoe UI", 8))
+                canvas.create_text(px + 8, py - 8, text=str(record["index"]), anchor="w", fill=self.colors["text"], font=("Segoe UI", 8))
         valid_residuals = [float(record["residual"]) for record in records if record.get("residual") is not None]
         if valid_residuals:
             canvas.create_text(
@@ -8131,7 +8070,7 @@ class ProbeApp(tk.Tk):
                 12,
                 text=f"Residual min {min(valid_residuals):.2f} / max {max(valid_residuals):.2f}",
                 anchor="ne",
-                fill="#cbd5e1",
+                fill=self.colors["text"],
                 font=("Segoe UI", 9),
             )
 
@@ -8159,11 +8098,13 @@ class ProbeApp(tk.Tk):
         if not hasattr(self, "focusmap_realtime_canvas"):
             return
         canvas = self.focusmap_realtime_canvas
+        canvas._theme_redraw = self._draw_focusmap_realtime
+        canvas.configure(bg=self.colors["surface_2"])
         width = max(canvas.winfo_width(), 10)
         height = max(canvas.winfo_height(), 10)
         canvas.delete("all")
-        canvas.create_rectangle(0, 0, width, height, fill="#071018", outline="")
-        canvas.create_text(12, 10, text="Realtime video", anchor="nw", fill="#cbd5e1", font=("Segoe UI Semibold", 10))
+        canvas.create_rectangle(0, 0, width, height, fill=self.colors["surface_2"], outline="")
+        canvas.create_text(12, 10, text="Realtime video", anchor="nw", fill=self.colors["text"], font=("Segoe UI Semibold", 10))
         frame = self.focusmap_realtime_bgr
         if frame is None:
             canvas.create_text(width // 2, height // 2, text="Waiting for camera frame", fill=self.colors["muted"], font=("Segoe UI Semibold", 11))
@@ -13307,6 +13248,8 @@ class ProbeApp(tk.Tk):
         if not hasattr(self, "imgstitch_mosaic_canvas"):
             return
         canvas = self.imgstitch_mosaic_canvas
+        canvas._theme_redraw = self._render_imgstitch_preview
+        canvas.configure(bg=self.colors["surface_2"])
         canvas.delete("all")
         if self.imgstitch_preview_bgr is None:
             canvas.create_text(20, 20, text="No mosaic yet", anchor="nw", fill=self.colors["muted"], font=("Segoe UI Semibold", 14))
@@ -13331,6 +13274,8 @@ class ProbeApp(tk.Tk):
         if not hasattr(self, "imgstitch_scatter_canvas"):
             return
         canvas = self.imgstitch_scatter_canvas
+        canvas._theme_redraw = self._render_imgstitch_scatter
+        canvas.configure(bg=self.colors["surface_2"])
         canvas.delete("all")
         grouped_points: dict[str, list[tuple[StitchEdgeQuality, tuple[float, float]]]] = {"Horizontal": [], "Vertical": []}
         for edge in self.imgstitch_latest_edges:
@@ -13347,13 +13292,13 @@ class ProbeApp(tk.Tk):
         colors = {"good": "#22c55e", "warning": "#facc15", "bad": "#ef4444"}
 
         def draw_group(title: str, points: list[tuple[StitchEdgeQuality, tuple[float, float]]], top: int, bottom: int) -> None:
-            canvas.create_text(10, top + 4, text=title, anchor="nw", fill="#e5e7eb", font=("Segoe UI", 8, "bold"))
+            canvas.create_text(10, top + 4, text=title, anchor="nw", fill=self.colors["text"], font=("Segoe UI", 8, "bold"))
             plot_x0 = 44
             plot_y0 = top + 24
             plot_x1 = max(plot_x0 + 20, canvas_w - 16)
             plot_y1 = max(plot_y0 + 20, bottom - 22)
-            canvas.create_line(plot_x0, plot_y1, plot_x1, plot_y1, fill="#94a3b8")
-            canvas.create_line(plot_x0, plot_y0, plot_x0, plot_y1, fill="#94a3b8")
+            canvas.create_line(plot_x0, plot_y1, plot_x1, plot_y1, fill=self.colors["muted"])
+            canvas.create_line(plot_x0, plot_y0, plot_x0, plot_y1, fill=self.colors["muted"])
             if not points:
                 canvas.create_text(plot_x0 + 6, plot_y0 + 6, text="No edges", anchor="nw", fill=self.colors["muted"], font=("Segoe UI", 8))
                 return
@@ -13372,11 +13317,11 @@ class ProbeApp(tk.Tk):
             y_ticks = (min_y, (min_y + max_y) / 2.0, max_y)
             for tick in x_ticks:
                 px = plot_x0 + (tick - min_x) / (max_x - min_x) * max(1, plot_x1 - plot_x0)
-                canvas.create_line(px, plot_y1, px, plot_y1 + 3, fill="#94a3b8")
+                canvas.create_line(px, plot_y1, px, plot_y1 + 3, fill=self.colors["muted"])
                 canvas.create_text(px, plot_y1 + 5, text=f"{tick:.0f}", anchor="n", fill="#cbd5e1", font=("Segoe UI", 6))
             for tick in y_ticks:
                 py = plot_y1 - (tick - min_y) / (max_y - min_y) * max(1, plot_y1 - plot_y0)
-                canvas.create_line(plot_x0 - 3, py, plot_x0, py, fill="#94a3b8")
+                canvas.create_line(plot_x0 - 3, py, plot_x0, py, fill=self.colors["muted"])
                 canvas.create_text(plot_x0 - 5, py, text=f"{tick:.0f}", anchor="e", fill="#cbd5e1", font=("Segoe UI", 6))
             for edge, shift in points:
                 px = plot_x0 + (shift[0] - min_x) / (max_x - min_x) * max(1, plot_x1 - plot_x0)

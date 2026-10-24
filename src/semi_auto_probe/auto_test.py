@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .ui.panel_scrolling import ScrollablePanel
+from .ui.panel_scrolling import ScrollablePanel, FoldableSidebar, fit_right_pane
 
 import json
 import math
@@ -1603,7 +1603,7 @@ class AutoTestPanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10, fit_width=True)
         viewer_panel.columnconfigure(0, weight=0, minsize=180)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
@@ -1623,12 +1623,14 @@ class AutoTestPanel:
             on_cursor_gds=self._set_cursor_gds,
             on_select_gds=self._handle_gds_click,
         )
+        self.left_sidebar = FoldableSidebar(viewer_panel, left_panel, canvas_panel)
         pane.add(viewer_panel, weight=1)
 
         controls = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=12)
         controls.columnconfigure(0, weight=1)
         self._build_controls(controls)
         pane.add(controls, weight=0)
+        fit_right_pane(pane, controls)
 
     def _build_left_panel(self, parent: ttk.Frame) -> None:
         preview = ttk.LabelFrame(parent, text="Microscope Live", padding=8)
@@ -1855,7 +1857,7 @@ class AutoTestPanel:
         ttk.Label(self.z_split_content_frame, textvariable=self.z_up_fast_percent_text_var, style="Value.TLabel", padding=6).grid(row=1, column=0, sticky="ew", pady=(5, 0))
         self._update_z_split_section_visibility()
 
-        self.z_wobble_curve_canvas = tk.Canvas(content, height=92, bg="#05070a", highlightthickness=1, highlightbackground=self.colors["border"], bd=0)
+        self.z_wobble_curve_canvas = tk.Canvas(content, height=92, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground=self.colors["border"], bd=0)
         self.z_wobble_curve_canvas.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         self.z_wobble_curve_canvas.bind("<Configure>", lambda _event: self._draw_z_wobble_curve())
         ttk.Button(content, text="Preview Test Points", command=self.redraw_preview).grid(row=9, column=0, columnspan=3, sticky="ew", pady=(10, 0))
@@ -2784,11 +2786,13 @@ class AutoTestPanel:
         canvas = getattr(self, "z_wobble_curve_canvas", None)
         if canvas is None:
             return
+        canvas._theme_redraw = self._draw_z_wobble_curve
+        canvas.configure(bg=self.colors["surface_2"])
         try:
             canvas.delete("all")
             width = max(canvas.winfo_width(), 1)
             height = max(canvas.winfo_height(), 1)
-            canvas.create_rectangle(0, 0, width, height, fill="#05070a", outline="")
+            canvas.create_rectangle(0, 0, width, height, fill=self.colors["surface_2"], outline="")
             wobble_um = float(self.z_wobble_um_var.get() or 0)
             cycles = int(float(self.z_wobble_cycles_var.get() or 0))
             offset_um = float(self.z_offset_um_var.get() or 0)
@@ -2808,7 +2812,7 @@ class AutoTestPanel:
         top = 14
         bottom = height - 20
         zero_y = (top + bottom) / 2.0
-        canvas.create_line(left, zero_y, right, zero_y, fill="#334155", width=1, dash=(3, 4))
+        canvas.create_line(left, zero_y, right, zero_y, fill=self.colors["border"], width=1, dash=(3, 4))
         canvas.create_text(left, 5, text="contact wobb time-Z", anchor="nw", fill=self.colors["muted"], font=("Segoe UI", 8))
         points = []
         denominator = max(len(values) - 1, 1)
@@ -2820,7 +2824,7 @@ class AutoTestPanel:
             coords: list[float] = []
             for x, y in points:
                 coords.extend((x, y))
-            canvas.create_line(coords, fill="#38bdf8", width=2)
+            canvas.create_line(coords, fill=self.colors["blue"], width=2)
         for x, y in points:
             canvas.create_oval(x - 2.5, y - 2.5, x + 2.5, y + 2.5, fill="#f8fafc", outline="#38bdf8")
         canvas.create_text(left, bottom + 2, text=f"{min(values):.3g}..{max(values):.3g} um", anchor="sw", fill=self.colors["muted"], font=("Segoe UI", 8))
@@ -2941,6 +2945,7 @@ class AutoTestPanel:
             self.microscope_payload_id = payload_id
             self.microscope_photo = tk.PhotoImage(data=payload, format="PPM")
             self.microscope_label.configure(image=self.microscope_photo, text="")
+            self.left_sidebar.schedule()
         except tk.TclError:
             return
 

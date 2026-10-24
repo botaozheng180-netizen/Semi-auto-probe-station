@@ -29,10 +29,10 @@ class MatplotlibFocusMap3DView:
         from matplotlib.figure import Figure
 
         self.colors = colors
-        self.widget = tk.Frame(parent, bg="#05070a", highlightthickness=1, highlightbackground="#334155")
+        self.widget = tk.Frame(parent, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground=self.colors["border"])
         self.widget.columnconfigure(0, weight=1)
         self.widget.rowconfigure(0, weight=1)
-        self.figure = Figure(figsize=(4.2, 3.0), dpi=100, facecolor="#05070a")
+        self.figure = Figure(figsize=(4.2, 3.0), dpi=100, facecolor=self.colors["surface_2"])
         self.axes = self.figure.add_subplot(111, projection="3d")
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.widget)
         self.canvas_widget = self.canvas.get_tk_widget()
@@ -61,11 +61,12 @@ class MatplotlibFocusMap3DView:
     def render(self, records: list[dict[str, object]], model: SamplePlaneModel | None) -> None:
         self.records = records
         self.model = model
+        self.widget._theme_redraw = lambda: self.render(self.records, self.model)
         self.axes.clear()
         self._style_axes()
         measured = [record for record in records if record.get("measured_z") is not None]
         if not measured:
-            self.axes.text2D(0.5, 0.5, "Waiting for measured points", transform=self.axes.transAxes, ha="center", color="#8fa0b3")
+            self.axes.text2D(0.5, 0.5, "Waiting for measured points", transform=self.axes.transAxes, ha="center", color=self.colors["muted"])
             self._apply_view()
             self.canvas.draw_idle()
             return
@@ -92,31 +93,33 @@ class MatplotlibFocusMap3DView:
             self.axes.plot_wireframe(grid_x, grid_y, grid_z, color="#38bdf8", alpha=0.55, linewidth=0.55, rstride=2, cstride=2)
             for x_value, y_value, z_value in zip(xs, ys, zs):
                 fit_z = model.z_at(float(x_value), float(y_value))
-                self.axes.plot([x_value, x_value], [y_value, y_value], [fit_z, z_value], color="#e5edf5", alpha=0.55, linewidth=0.8)
+                self.axes.plot([x_value, x_value], [y_value, y_value], [fit_z, z_value], color=self.colors["text"], alpha=0.55, linewidth=0.8)
 
-        self.axes.scatter(xs, ys, zs, c=point_colors, s=36, depthshade=True, edgecolors="#e5edf5", linewidths=0.5)
+        self.axes.scatter(xs, ys, zs, c=point_colors, s=36, depthshade=True, edgecolors=self.colors["text"], linewidths=0.5)
         for record, x_value, y_value, z_value in zip(measured, xs, ys, zs):
             if len(measured) <= 25:
-                self.axes.text(x_value, y_value, z_value, str(record["index"]), color="#e5edf5", fontsize=7)
+                self.axes.text(x_value, y_value, z_value, str(record["index"]), color=self.colors["text"], fontsize=7)
 
-        self.axes.set_xlabel("X", color="#cbd5e1", labelpad=2)
-        self.axes.set_ylabel("Y", color="#cbd5e1", labelpad=2)
-        self.axes.set_zlabel("Z", color="#cbd5e1", labelpad=2)
+        self.axes.set_xlabel("X", color=self.colors["text"], labelpad=2)
+        self.axes.set_ylabel("Y", color=self.colors["text"], labelpad=2)
+        self.axes.set_zlabel("Z", color=self.colors["text"], labelpad=2)
         self._update_limits(xs, ys, zs, model)
         self._apply_view()
         self.figure.subplots_adjust(left=0.0, right=0.98, bottom=0.0, top=0.98)
         self.canvas.draw_idle()
 
     def _style_axes(self) -> None:
-        self.axes.set_facecolor("#05070a")
-        self.axes.tick_params(colors="#94a3b8", labelsize=7, pad=0)
+        self.figure.set_facecolor(self.colors["surface_2"])
+        self.axes.set_facecolor(self.colors["surface_2"])
+        self.canvas_widget.configure(bg=self.colors["surface_2"])
+        self.axes.tick_params(colors=self.colors["muted"], labelsize=7, pad=0)
         for axis in (self.axes.xaxis, self.axes.yaxis, self.axes.zaxis):
-            axis.pane.set_facecolor((0.02, 0.04, 0.07, 0.72))
-            axis.pane.set_edgecolor("#182231")
+            axis.pane.set_facecolor(self.colors["surface_2"])
+            axis.pane.set_edgecolor(self.colors["border"])
             try:
-                axis._axinfo["grid"]["color"] = (0.12, 0.16, 0.22, 0.42)
+                axis._axinfo["grid"]["color"] = self.colors["border"]
                 axis._axinfo["grid"]["linewidth"] = 0.45
-                axis._axinfo["axisline"]["color"] = (0.18, 0.24, 0.32, 0.65)
+                axis._axinfo["axisline"]["color"] = self.colors["muted"]
             except (AttributeError, KeyError):
                 pass
         self.axes.grid(True)
@@ -224,7 +227,7 @@ class MatplotlibFocusMap3DView:
 class CanvasFocusMap3DView:
     def __init__(self, parent: tk.Widget, colors: dict[str, str]) -> None:
         self.colors = colors
-        self.widget = tk.Canvas(parent, bg="#05070a", highlightthickness=1, highlightbackground="#334155")
+        self.widget = tk.Canvas(parent, bg=self.colors["surface_2"], highlightthickness=1, highlightbackground=self.colors["border"])
         self.yaw = -35.0
         self.pitch = 28.0
         self.zoom = 1.0
@@ -241,11 +244,12 @@ class CanvasFocusMap3DView:
     def render(self, records: list[dict[str, object]], model: SamplePlaneModel | None) -> None:
         self.records = records
         self.model = model
+        self.widget._theme_redraw = lambda: self.render(self.records, self.model)
         canvas = self.widget
         width = max(canvas.winfo_width(), 10)
         height = max(canvas.winfo_height(), 10)
         canvas.delete("all")
-        canvas.create_rectangle(0, 0, width, height, fill="#05070a", outline="")
+        canvas.create_rectangle(0, 0, width, height, fill=self.colors["surface_2"], outline="")
         measured = [record for record in records if record.get("measured_z") is not None]
         if not measured:
             canvas.create_text(width // 2, height // 2, text="3D view waits for measured points", fill=self.colors["muted"], font=("Segoe UI Semibold", 12))
@@ -278,7 +282,7 @@ class CanvasFocusMap3DView:
             perspective = 1.0 / max(0.55, 1.0 + y2 * 0.35)
             return width / 2.0 + x1 * scale * perspective, height / 2.0 - z2 * scale * perspective, y2
 
-        canvas.create_text(12, 10, text="Canvas fallback | Drag rotate | Wheel zoom", anchor="nw", fill="#cbd5e1", font=("Segoe UI", 9))
+        canvas.create_text(12, 10, text="Canvas fallback | Drag rotate | Wheel zoom", anchor="nw", fill=self.colors["text"], font=("Segoe UI", 9))
         if model is not None:
             grid_count = 7
             plane_points: list[list[tuple[float, float, float]]] = []
@@ -313,7 +317,7 @@ class CanvasFocusMap3DView:
             color = _residual_color(residual, max_abs_residual)
             canvas.create_oval(sx - 5, sy - 5, sx + 5, sy + 5, fill=color, outline="#e5edf5")
             if len(projected_records) <= 25:
-                canvas.create_text(sx + 7, sy - 7, text=str(record["index"]), anchor="w", fill="#e5edf5", font=("Segoe UI", 8))
+                canvas.create_text(sx + 7, sy - 7, text=str(record["index"]), anchor="w", fill=self.colors["text"], font=("Segoe UI", 8))
 
     def _on_press(self, event: tk.Event) -> str:
         self.drag_start = (event.x, event.y, self.yaw, self.pitch)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .ui.panel_scrolling import ScrollablePanel
+from .ui.panel_scrolling import ScrollablePanel, FoldableSidebar, fit_right_pane
 
 import math
 import re
@@ -250,7 +250,7 @@ class ImgMatrixPanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10, fit_width=True)
         viewer_panel.columnconfigure(0, weight=0, minsize=180)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
@@ -270,12 +270,14 @@ class ImgMatrixPanel:
             on_cursor_gds=self._set_cursor_gds,
             on_select_gds=self._handle_gds_click,
         )
+        self.left_sidebar = FoldableSidebar(viewer_panel, left_panel, canvas_panel)
         pane.add(viewer_panel, weight=1)
 
         controls = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=12)
         controls.columnconfigure(0, weight=1)
         self._build_controls(controls)
         pane.add(controls, weight=0)
+        fit_right_pane(pane, controls)
 
     def _build_left_panel(self, parent: ttk.Frame) -> None:
         preview = ttk.LabelFrame(parent, text="Microscope Live", padding=8)
@@ -829,6 +831,7 @@ class ImgMatrixPanel:
             self.microscope_payload_id = payload_id
             self.microscope_photo = tk.PhotoImage(data=payload, format="PPM")
             self.microscope_label.configure(image=self.microscope_photo, text="")
+            self.left_sidebar.schedule()
         except tk.TclError:
             return
 

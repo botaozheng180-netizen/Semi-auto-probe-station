@@ -42,7 +42,7 @@ class VisionPanel:
         self.probe_assist_colors: list[str] = []
         self.probe_assist_fixed = False
         self.probe_assist_drag_index: int | None = None
-        self.tool_buttons: dict[str, tk.Button] = {}
+        self.tool_buttons: dict[str, ttk.Button] = {}
         self.measure_points: list[tuple[float, float]] = []
         self.polygon_closed = False
         self.configure_job: str | None = None
@@ -106,24 +106,9 @@ class VisionPanel:
             self.tool_buttons[tool] = button
         self._refresh_tool_buttons()
 
-    def _toolbar_button(self, parent: tk.Widget, text: str, command: Callable[[], None], *, width: int | None = None) -> tk.Button:
-        options = {
-            "text": text,
-            "command": command,
-            "bg": self.colors["surface_3"],
-            "fg": self.colors["text"],
-            "activebackground": "#223144",
-            "activeforeground": self.colors["text"],
-            "relief": "flat",
-            "bd": 0,
-            "padx": 10,
-            "pady": 6,
-            "font": ("Segoe UI", 9),
-            "cursor": "hand2",
-        }
-        if width is not None:
-            options["width"] = width
-        return tk.Button(parent, **options)
+    def _toolbar_button(self, parent: tk.Widget, text: str, command: Callable[[], None], *, width: int | None = None) -> ttk.Button:
+        return ttk.Button(parent, text=text, command=command, style="Vision.Tool.TButton",
+                          width=width if width is not None else -1, cursor="hand2")
 
     def set_tool(self, tool: str) -> None:
         if tool == "cross":
@@ -351,12 +336,7 @@ class VisionPanel:
                 is_active = self.probe_assist_enabled
             else:
                 is_active = active_tool == tool
-            button.configure(
-                bg="#0f3b2d" if is_active else self.colors["surface_3"],
-                fg="#d1fae5" if is_active else self.colors["text"],
-                highlightthickness=1 if is_active else 0,
-                highlightbackground="#2dd4bf" if is_active else self.colors["border"],
-            )
+            button.state(["selected"] if is_active else ["!selected"])
 
     def _draw_gds_overlay(self) -> None:
         if not self.gds_overlay_enabled or self.get_gds_overlay_polygons is None:

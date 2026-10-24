@@ -6,6 +6,57 @@ import unittest
 
 
 class PanelScrollingTests(unittest.TestCase):
+    def test_sidebar_width_folding_and_window_resize(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")
+        result = subprocess.run([sys.executable, "-c", '''
+import tkinter as tk
+from tkinter import ttk
+from semi_auto_probe.ui.panel_scrolling import ScrollablePanel, FoldableSidebar, fit_right_pane
+r = tk.Tk()
+r.geometry("1200x650")
+pane = ttk.PanedWindow(r, orient=tk.HORIZONTAL)
+pane.pack(fill="both", expand=True)
+viewer = ScrollablePanel(pane, padding=10, fit_width=True)
+viewer.rowconfigure(0, weight=1)
+left = ScrollablePanel(viewer, raised=False)
+left.grid(row=0, column=0, sticky="nsew")
+preview = ttk.Label(left, text="Preview")
+preview.pack()
+canvas = ttk.Frame(viewer, width=600)
+canvas.grid(row=0, column=1, sticky="nsew")
+sidebar = FoldableSidebar(viewer, left, canvas)
+right = ScrollablePanel(pane, padding=12)
+ttk.Entry(right, width=30).pack()
+pane.add(viewer, weight=1)
+pane.add(right, weight=0)
+fit_right_pane(pane, right)
+r.update()
+image = tk.PhotoImage(width=420, height=300)
+preview.configure(image=image)
+sidebar.schedule()
+r.update()
+assert left.shell.winfo_width() >= left.winfo_reqwidth()
+assert right.canvas.winfo_width() >= right.winfo_reqwidth()
+assert right.canvas.winfo_width() - right.winfo_reqwidth() < 5
+original = canvas.winfo_width()
+sidebar.button.invoke()
+r.update()
+assert canvas.winfo_width() > original
+assert not left.shell.winfo_ismapped()
+sidebar.button.invoke()
+r.update()
+assert left.shell.winfo_ismapped()
+assert canvas.winfo_width() == original
+right_width = right.canvas.winfo_width()
+r.geometry("1400x650")
+r.update()
+assert abs(right.canvas.winfo_width() - right_width) <= 2
+assert canvas.winfo_width() > original
+r.destroy()
+'''], env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_clipping_local_wheel_and_resize(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(Path(__file__).parents[1] / "src")

@@ -176,6 +176,7 @@ class AgentPanel:
         chat_scrollbar.grid(row=1, column=1, sticky="ns")
         self.chat_text.configure(yscrollcommand=chat_scrollbar.set, state="disabled")
         self._configure_chat_tags()
+        self.chat_text._theme_redraw = self._configure_chat_tags
 
         self.chat_action_frame = ttk.Frame(chat_card, style="Panel.TFrame")
         self.chat_action_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
@@ -436,9 +437,9 @@ class AgentPanel:
         self.chat_text.tag_configure("divider", foreground=self.colors["muted"], justify="center", spacing1=10, spacing3=10)
         self.chat_text.tag_configure("md_h1", foreground=self.colors["text"], font=("Segoe UI Semibold", 15))
         self.chat_text.tag_configure("md_h2", foreground=self.colors["text"], font=("Segoe UI Semibold", 13))
-        self.chat_text.tag_configure("md_bold", foreground="#f8fafc", font=("Segoe UI Semibold", 10))
-        self.chat_text.tag_configure("md_code", background="#071018", foreground="#c4b5fd", font=("Cascadia Mono", 9), lmargin1=18, lmargin2=18)
-        self.chat_text.tag_configure("md_table", font=("Cascadia Mono", 9), foreground="#cbd5e1")
+        self.chat_text.tag_configure("md_bold", foreground=self.colors["text"], font=("Segoe UI Semibold", 10))
+        self.chat_text.tag_configure("md_code", background=self.colors["surface_2"], foreground=self.colors["blue"], font=("Cascadia Mono", 9), lmargin1=18, lmargin2=18)
+        self.chat_text.tag_configure("md_table", font=("Cascadia Mono", 9), foreground=self.colors["text"])
         self.chat_text.tag_configure("md_list", lmargin1=22, lmargin2=36)
 
     @staticmethod

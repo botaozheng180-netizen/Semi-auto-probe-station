@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .ui.panel_scrolling import ScrollablePanel
+from .ui.panel_scrolling import ScrollablePanel, FoldableSidebar, fit_right_pane
 
 import math
 import tkinter as tk
@@ -350,7 +350,7 @@ class EdgeTracePanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10, fit_width=True)
         viewer_panel.columnconfigure(0, weight=0, minsize=210)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
@@ -372,44 +372,15 @@ class EdgeTracePanel:
             on_work_bounds=self._set_work_bounds_from_canvas,
         )
         self._update_snap_grid(update_status=False)
+        self.left_sidebar = FoldableSidebar(viewer_panel, left_panel, canvas_panel)
         pane.add(viewer_panel, weight=1)
 
-        controls_shell = ScrollablePanel(pane, style="Raised.Panel.TFrame")
+        controls_shell = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
         controls_shell.columnconfigure(0, weight=1)
-        controls_shell.rowconfigure(0, weight=1)
-        controls_canvas = tk.Canvas(
-            controls_shell,
-            bg=self.colors["surface"],
-            bd=0,
-            highlightthickness=0,
-            width=330,
-        )
-        controls_scrollbar = ttk.Scrollbar(controls_shell, orient=tk.VERTICAL, command=controls_canvas.yview)
-        controls_canvas.configure(yscrollcommand=controls_scrollbar.set)
-        controls_canvas.grid(row=0, column=0, sticky="nsew")
-        controls_scrollbar.grid(row=0, column=1, sticky="ns")
-        controls = ttk.Frame(controls_canvas, style="Panel.TFrame", padding=10)
-        controls.columnconfigure(0, weight=1)
-        controls_window = controls_canvas.create_window((0, 0), window=controls, anchor="nw")
-
-        def sync_scrollregion(_event: tk.Event | None = None) -> None:
-            controls_canvas.configure(scrollregion=controls_canvas.bbox("all"))
-
-        def sync_canvas_width(event: tk.Event) -> None:
-            controls_canvas.itemconfigure(controls_window, width=event.width)
-
-        def scroll_controls(event: tk.Event) -> str:
-            delta = getattr(event, "delta", 0)
-            if delta:
-                controls_canvas.yview_scroll(int(-delta / 120), "units")
-            return "break"
-
-        controls.bind("<Configure>", sync_scrollregion)
-        controls_canvas.bind("<Configure>", sync_canvas_width)
-        controls_canvas.bind("<MouseWheel>", scroll_controls)
-        controls.bind("<MouseWheel>", scroll_controls)
+        controls = controls_shell
         self._build_controls(controls)
         pane.add(controls_shell, weight=0)
+        fit_right_pane(pane, controls_shell)
 
     def _build_left_panel(self, parent: ttk.Frame) -> None:
         preview = ttk.LabelFrame(parent, text="Microscope Live", padding=8)
@@ -1062,6 +1033,7 @@ class EdgeTracePanel:
             self.microscope_payload_id = payload_id
             self.microscope_photo = tk.PhotoImage(data=payload, format="PPM")
             self.microscope_label.configure(image=self.microscope_photo, text="")
+            self.left_sidebar.schedule()
         except tk.TclError:
             return
 

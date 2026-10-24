@@ -10,7 +10,8 @@ class ScrollablePanel(ttk.Frame):
     conversion expose the outer card to grid, pack, paned windows and canvases.
     Widget operations and child construction still target the inner frame.
     """
-    def __init__(self, parent, *, raised=True, style=None, **options):
+    def __init__(self, parent, *, raised=True, style=None, fit_width=False, **options):
+        self.fit_width = fit_width
         self.shell = ttk.Frame(parent, style="Raised.Panel.TFrame" if raised else "Panel.TFrame",
                                padding=18 if raised else 0)
         self.shell.rowconfigure(0, weight=1)
@@ -75,10 +76,84 @@ class ScrollablePanel(ttk.Frame):
             self.canvas.configure(width=requested_width)
         if int(self.canvas.cget("height")) != requested_height:
             self.canvas.configure(height=requested_height)
-        width = max(self.canvas.winfo_width(), requested_width)
+        width = self.canvas.winfo_width() if self.fit_width else max(self.canvas.winfo_width(), requested_width)
         height = max(self.canvas.winfo_height(), requested_height)
         self.canvas.itemconfigure(self.item, width=width, height=height)
         self.canvas.configure(scrollregion=(0, 0, width, height))
+
+
+def fit_right_pane(pane, right):
+    """Reserve the sidebar's natural width; window growth goes to the viewer."""
+    pending = None
+    last_size = None
+
+    def sync():
+        nonlocal pending, last_size
+        pending = None
+        if not pane.winfo_ismapped():
+            return
+        right.sync()
+        width = pane.winfo_width()
+        desired = right.winfo_reqwidth() + 38
+        size = (width, desired)
+        if width > 1 and size != last_size:
+            last_size = size
+            pane.sashpos(0, max(0, width - desired - 5))
+
+    def schedule(_event=None):
+        nonlocal pending
+        if pending is None:
+            pending = pane.after_idle(sync)
+    pane.bind("<Map>", schedule, add="+")
+    pane.bind("<Configure>", schedule, add="+")
+    right.bind("<Configure>", schedule, add="+")
+    schedule()
+
+
+class FoldableSidebar:
+    """Keep the left controls at their natural width beside a flexible viewer."""
+    def __init__(self, parent, left, viewer):
+        self.parent, self.left, self.viewer = parent, left, viewer
+        self.collapsed = False
+        parent.fit_width = True
+        parent.columnconfigure(0, weight=0)
+        parent.columnconfigure(1, weight=0)
+        parent.columnconfigure(2, weight=1)
+        viewer.grid_configure(column=2)
+        self.button = ttk.Button(parent, text="‹", width=1, padding=(3, 12),
+                                 style="Ghost.TButton", command=self.toggle, cursor="hand2")
+        self.button.grid(row=0, column=1, sticky="", padx=(0, 6))
+        self.pending = None
+        left.bind("<Configure>", self.schedule, add="+")
+        parent.bind("<Map>", self.schedule, add="+")
+        # Preview images can change requested size without resizing the frame.
+        def observe(widget):
+            widget.bind("<Configure>", self.schedule, add="+")
+            for child in widget.winfo_children():
+                observe(child)
+        observe(left)
+        self.schedule()
+
+    def schedule(self, _event=None):
+        if self.pending is None:
+            self.pending = self.parent.after_idle(self.sync)
+
+    def sync(self):
+        self.pending = None
+        if not self.collapsed:
+            self.left.sync()
+            self.parent.columnconfigure(0, minsize=self.left.winfo_reqwidth() + 10)
+
+    def toggle(self):
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self.left.grid_remove()
+            self.parent.columnconfigure(0, minsize=0)
+            self.button.configure(text="›")
+        else:
+            self.left.grid()
+            self.button.configure(text="‹")
+            self.sync()
 
 
 def install_panel_scrolling(root, pages, colors):

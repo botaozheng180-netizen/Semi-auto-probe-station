@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from .ui.panel_scrolling import ScrollablePanel
+from .ui.toggle_switch import ToggleSwitch
+from .ui.panel_scrolling import ScrollablePanel, FoldableSidebar, fit_right_pane
 
 import importlib.util
 import json
@@ -85,70 +86,6 @@ class AuxiliaryPointOverlay:
     style: str = "cross"
     color: str = "#f43f5e"
     radius: int = 10
-
-
-class ToggleSwitch(tk.Canvas):
-    def __init__(
-        self,
-        parent: tk.Widget,
-        variable: tk.BooleanVar,
-        colors: dict[str, str],
-        *,
-        command: Callable[[], None] | None = None,
-        background: str | None = None,
-        width: int = 44,
-        height: int = 24,
-    ) -> None:
-        super().__init__(
-            parent,
-            width=width,
-            height=height,
-            bg=background or colors["surface"],
-            bd=0,
-            highlightthickness=0,
-            cursor="hand2",
-        )
-        self.variable = variable
-        self.colors = colors
-        self.command = command
-        self.switch_width = width
-        self.switch_height = height
-        self.variable.trace_add("write", lambda *_args: self._draw())
-        self.bind("<Button-1>", self._toggle)
-        self.bind("<space>", self._toggle)
-        self.bind("<Return>", self._toggle)
-        self._draw()
-
-    def _toggle(self, _event: tk.Event | None = None) -> str:
-        self.variable.set(not bool(self.variable.get()))
-        if self.command is not None:
-            self.command()
-        return "break"
-
-    def _draw(self) -> None:
-        self.delete("all")
-        enabled = bool(self.variable.get())
-        width = self.switch_width
-        height = self.switch_height
-        radius = height / 2
-        track_fill = "#0f3b2d" if enabled else self.colors["surface_3"]
-        track_outline = "#1f7a5a" if enabled else self.colors["border"]
-        knob_fill = "#d1fae5" if enabled else self.colors["muted"]
-        self.create_oval(1, 1, 1 + height - 2, height - 1, fill=track_fill, outline=track_outline, width=1)
-        self.create_oval(width - height + 1, 1, width - 1, height - 1, fill=track_fill, outline=track_outline, width=1)
-        self.create_rectangle(radius, 1, width - radius, height - 1, fill=track_fill, outline=track_fill)
-        self.create_line(radius, 1, width - radius, 1, fill=track_outline)
-        self.create_line(radius, height - 1, width - radius, height - 1, fill=track_outline)
-        knob_radius = radius - 4
-        knob_center = width - radius if enabled else radius
-        self.create_oval(
-            knob_center - knob_radius,
-            radius - knob_radius,
-            knob_center + knob_radius,
-            radius + knob_radius,
-            fill=knob_fill,
-            outline=knob_fill,
-        )
 
 
 @dataclass(frozen=True)
@@ -1470,7 +1407,7 @@ class GDSStageMapperPanel:
         pane = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         pane.grid(row=0, column=0, sticky="nsew")
 
-        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10)
+        viewer_panel = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=10, fit_width=True)
         viewer_panel.columnconfigure(0, weight=0, minsize=180)
         viewer_panel.columnconfigure(1, weight=1)
         viewer_panel.rowconfigure(0, weight=1)
@@ -1494,20 +1431,14 @@ class GDSStageMapperPanel:
             on_select_gds=self._handle_gds_click,
             on_shift_double_click_gds=self._handle_shift_double_click_move,
         )
+        self.left_sidebar = FoldableSidebar(viewer_panel, left_panel, gds_canvas_panel)
         pane.add(viewer_panel, weight=1)
 
-        controls_outer = ScrollablePanel(pane, style="Raised.Panel.TFrame")
+        controls_outer = ScrollablePanel(pane, style="Raised.Panel.TFrame", padding=12)
         controls_outer.columnconfigure(0, weight=1)
-        controls_outer.rowconfigure(0, weight=1)
-        controls_canvas = tk.Canvas(controls_outer, bg=self.colors["surface"], highlightthickness=0, width=410)
-        controls_canvas.grid(row=0, column=0, sticky="nsew")
-        controls = ttk.Frame(controls_canvas, style="Panel.TFrame", padding=12)
-        controls_window = controls_canvas.create_window((0, 0), window=controls, anchor="nw")
-        controls.bind("<Configure>", lambda event: controls_canvas.configure(scrollregion=controls_canvas.bbox("all")))
-        controls_canvas.bind("<Configure>", lambda event: self._on_controls_canvas_configure(controls_canvas, controls_window, event.width))
-        controls_canvas.bind("<MouseWheel>", lambda event: self._scroll_controls_canvas(controls_canvas, event))
-        controls.bind("<MouseWheel>", lambda event: self._scroll_controls_canvas(controls_canvas, event))
+        controls = controls_outer
         pane.add(controls_outer, weight=0)
+        fit_right_pane(pane, controls_outer)
 
         row = 0
         row = self._build_gds_file_section(controls, row)
@@ -1840,7 +1771,7 @@ class GDSStageMapperPanel:
 
     def _build_calibration_section(self, parent: ttk.Frame, row: int) -> int:
         section = self._collapsible_section(parent, "Calibration Points", row, f"{len(self.POINT_NAMES)} point affine fit")
-        headings = ("Pt", "GDSu", "GDSv", "Pick", "x", "y", "Pick/Move")
+        headings = ("Pt", "GDSu", "GDSv", "Pick", "x", "y", "Pick", "Move")
         for col, heading in enumerate(headings):
             ttk.Label(section, text=heading, style="Muted.TLabel").grid(row=0, column=col, sticky="w", padx=(0, 5))
         for col in (1, 2, 4, 5):
@@ -1851,30 +1782,25 @@ class GDSStageMapperPanel:
             for col, key in ((1, "u"), (2, "v")):
                 ttk.Entry(section, textvariable=self.point_vars[name][key], width=5).grid(row=row_index, column=col, sticky="ew", padx=(0, 4), pady=(5, 0))
             set_gds_button = self._calibration_icon_button(
-                section, "✔", lambda point=name: self._arm_gds_point_capture(point),
+                section, "✔", lambda point=name: self._arm_gds_point_capture(point), pick=True,
             )
             set_gds_button.grid(row=row_index, column=3, sticky="ew", padx=(0, 4), pady=(5, 0))
             self.gds_point_buttons[name] = set_gds_button
             for col, key in ((4, "x_um"), (5, "y_um")):
                 ttk.Entry(section, textvariable=self.point_vars[name][key], width=5).grid(row=row_index, column=col, sticky="ew", padx=(0, 4), pady=(5, 0))
-            stage_actions = ttk.Frame(section, style="Panel.TFrame")
-            stage_actions.grid(row=row_index, column=6, sticky="ew", pady=(5, 0))
-            stage_actions.columnconfigure((0, 1), weight=1, uniform=f"stage_actions_{name}")
             self._calibration_icon_button(
-                stage_actions,
-                "\u2697",
-                lambda point=name: self._set_point_stage_from_current(point),
-            ).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+                section, "\u2697",
+                lambda point=name: self._set_point_stage_from_current(point), pick=True,
+            ).grid(row=row_index, column=6, sticky="ew", padx=(0, 4), pady=(5, 0))
             self._calibration_icon_button(
-                stage_actions,
-                "\u26a1",
+                section, "\u26a1",
                 lambda point=name: self._move_to_calibration_stage_point(point),
-            ).grid(row=0, column=1, sticky="ew")
+            ).grid(row=row_index, column=7, sticky="ew", pady=(5, 0))
         return row + 1
 
-    def _calibration_icon_button(self, parent: tk.Widget, text: str, command: Callable[[], None]) -> ttk.Button:
+    def _calibration_icon_button(self, parent: tk.Widget, text: str, command: Callable[[], None], *, pick: bool = False) -> ttk.Button:
         return ttk.Button(parent, text=text, command=command,
-                          style="Calibration.TButton", width=2, cursor="hand2")
+                          style="Pick.Calibration.TButton" if pick else "Calibration.TButton", width=2, cursor="hand2")
 
     def _build_mapping_section(self, parent: ttk.Frame, row: int) -> int:
         section = self._section(parent, "Mapping", row)
@@ -2534,6 +2460,7 @@ class GDSStageMapperPanel:
                 magnifier_text = f" Magnifier {magnification:.2g}x, size {radius_fraction * 100:.0f}%."
             self.microscope_photo = tk.PhotoImage(data=payload, format="PPM")
             self.microscope_label.configure(image=self.microscope_photo, text="")
+            self.left_sidebar.schedule()
             self.microscope_status_var.set(f"Microscope: live frame.{magnifier_text}")
         except tk.TclError as exc:
             self.microscope_status_var.set(f"Microscope: preview error ({exc})")

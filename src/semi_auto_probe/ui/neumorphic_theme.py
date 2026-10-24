@@ -19,6 +19,8 @@ def surface(master, base, bright, shadow, *, inset=False, focus=None, face=None,
     bounds = (margin, margin, w-margin-1, h-margin-1)
     ImageDraw.Draw(mask).rounded_rectangle(bounds, radius, fill=255)
     result = Image.new("RGB", size, base)
+    if inset and face:
+        result.paste(face, (0, 0), mask)
     for dx, dy, color in ((-offset, -offset, bright), (offset, offset, shadow)):
         layer = Image.new("L", size)
         ImageDraw.Draw(layer).rounded_rectangle((bounds[0]+dx, bounds[1]+dy, bounds[2]+dx, bounds[3]+dy), radius, fill=255)
@@ -59,6 +61,10 @@ def install(root, colors, mode):
         style.element_create(f"Neu{mode}.button", "image", normal,
                              ("disabled", normal), ("pressed", pressed),
                              ("focus", keyboard_focus), ("active", highlighted), border=15, padding=3, width=0, height=0, sticky="nsew")
+        style.element_create(f"Neu{mode}.tool", "image", normal,
+                             ("disabled", normal), ("pressed", pressed), ("selected", pressed),
+                             ("focus", keyboard_focus), ("active", highlighted),
+                             border=15, padding=3, width=0, height=0, sticky="nsew")
         style.element_create(f"Neu{mode}.field", "image", pressed,
                              ("focus", focus), border=15, padding=3, width=0, height=0, sticky="nsew")
         switches = []
@@ -92,10 +98,15 @@ def install(root, colors, mode):
     button_layout = [(f"Neu{mode}.button", {"sticky": "nsew", "children": [
         ("Button.padding", {"sticky": "nsew", "children": [
             ("Button.label", {"sticky": "nsew"})]})]})]
+    style.layout("Vision.Tool.TButton", [(f"Neu{mode}.tool", {"sticky": "nsew", "children": [
+        ("Button.padding", {"sticky": "nsew", "children": [("Button.label", {"sticky": "nsew"})]})]})])
+    style.configure("Vision.Tool.TButton", font=("Segoe UI", 9), padding=(10, 6))
+    style.map("Vision.Tool.TButton", foreground=[("disabled", colors["muted"]),
+              ("selected", colors["accent"]), ("!disabled", colors["text"])])
     style.layout("Navigation.TButton", [(f"Neu{mode}.tab", {"sticky": "nsew", "children": [
         ("Button.padding", {"sticky": "nsew", "children": [
             ("Button.label", {"sticky": "nsew"})]})]})])
-    style.configure("Navigation.TButton", font=("Segoe UI Emoji", 12),
+    style.configure("Navigation.TButton", font=("Segoe UI Emoji", 12, "bold"),
                     padding=(8, 7), width=-1, anchor="center")
     style.map("Navigation.TButton", foreground=[("disabled", colors["muted"]),
               ("selected", colors["accent"]), ("active", colors["text"]),
@@ -108,6 +119,11 @@ def install(root, colors, mode):
         style.map(name, foreground=[("disabled", colors["muted"]), ("!disabled", colors[color])])
     style.configure("Calibration.TButton", padding=(6, 5), font=("Segoe UI Symbol", 10, "bold"))
     style.map("Calibration.TButton", foreground=[("selected", colors["warning"]), ("!selected", colors["text"])])
+    style.layout("Pick.Calibration.TButton", button_layout)
+    pick_icon = "#047857" if mode == "light" else "#34d399"
+    style.configure("Pick.Calibration.TButton", foreground=pick_icon)
+    style.map("Pick.Calibration.TButton", foreground=[("disabled", colors["muted"]),
+              ("selected", colors["warning"]), ("!disabled", pick_icon)])
     style.layout("TEntry", [(f"Neu{mode}.field", {"sticky": "nsew", "children": [
         ("Entry.padding", {"sticky": "nsew", "children": [("Entry.textarea", {"sticky": "nsew"})]})]})])
     style.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nsew", "children": [
@@ -128,7 +144,8 @@ def recolor_widgets(root, previous, current):
     """Update classic Tk surfaces without touching image/camera pixel data."""
     replacements = {value: current[key] for key, value in previous.items()}
     def visit(widget):
-        for option in ("background", "foreground", "insertbackground", "highlightbackground"):
+        for option in ("background", "foreground", "readonlybackground", "disabledbackground",
+                       "disabledforeground", "insertbackground", "highlightbackground"):
             try:
                 old = str(widget.cget(option))
                 if old in replacements:
@@ -138,6 +155,9 @@ def recolor_widgets(root, previous, current):
         if hasattr(widget, "_draw") and hasattr(widget, "switch_width"):
             widget.colors = current
             widget._draw()
+        redraw = getattr(widget, "_theme_redraw", None)
+        if redraw is not None:
+            redraw()
         for child in widget.winfo_children():
             visit(child)
     visit(root)
