@@ -35,4 +35,4 @@ semi-auto-probe-measure = "semi_auto_probe.measure_debug:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-semi_auto_probe = ["assets/*", "web/README.md", "web/static/*"]
+semi_auto_probe = ["assets/*", "assets/nature/*", "web/README.md", "web/static/*"]

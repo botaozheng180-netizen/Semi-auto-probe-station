@@ -19,6 +19,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .ui.navigation_icons import install_navigation_icon
+from .ui.app_identity import set_windows_app_identity
 from .ui.rolling_description import RollingDescription
 from .ui.toggle_switch import ToggleSwitch
 from .ui.input_focus import install_input_focus
@@ -1318,6 +1319,9 @@ class ProbeApp(tk.Tk):
         restore_last: bool = False,
         startup_progress: Callable[[str, int], None] | None = None,
     ) -> None:
+        # Windows otherwise groups this window under the Python interpreter,
+        # which can override our logo with Python's taskbar icon.
+        set_windows_app_identity()
         super().__init__()
         # Do not expose a partially constructed window. The lightweight
         # startup module keeps its splash visible until this constructor ends.
@@ -2273,6 +2277,14 @@ class ProbeApp(tk.Tk):
         install_panel_scrolling(self, self.pages.values(), self.colors)
         install_input_focus(self)
         self.show_page("Main")
+
+        # Nature is presentation-only: page routing and questions, never motion.
+        from .ui.nature import NatureCompanion
+        try:
+            self.nature = NatureCompanion(self)
+            self.gds_stage_mapper_panel.on_nature_calibration = lambda ok: self.nature.observe(("nature_result", "layout", ok))
+        except Exception:
+            logger.exception("Nature could not be initialized")
 
     def show_page(self, name: str) -> None:
         if name not in self.pages:
@@ -6693,10 +6705,13 @@ class ProbeApp(tk.Tk):
             generation = self.__dict__.get("_display_basis_generation", 0)
             basis = coordinate_basis(self.probe_config)
             result = self._run_autofocus_sequence(metric, initial_step, min_step, search_range, source="autofocus", status_event="autofocus_status")
+            if result and not result.get("stopped"):
+                self.result_queue.put(("nature_result", "autofocus", bool(result.get("usable"))))
             if result and result.get("usable") and not result.get("stopped"):
                 self.result_queue.put(("display_focus_reference", result["result_z"], basis, generation))
         except Exception as exc:
             self.result_queue.put(("autofocus_error", exc))
+            self.result_queue.put(("nature_result", "autofocus", False))
         finally:
             self._write_autofocus_history_file()
             self.result_queue.put(("autofocus_done",))
@@ -14473,6 +14488,12 @@ class ProbeApp(tk.Tk):
 
     def _handle_worker_event(self, event: tuple) -> None:
         self._handle_worker_event_impl(event)
+        nature = self.__dict__.get("nature")
+        if nature is not None:
+            try:
+                nature.observe(event)
+            except Exception:
+                logger.exception("Nature could not display workflow feedback")
         runtime = self.__dict__.get("agent_runtime")
         if runtime is not None:
             result = runtime.observe(event)

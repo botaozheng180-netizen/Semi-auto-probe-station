@@ -577,6 +577,18 @@ class AgentPanel:
             return
         self.parent.after(120, self._update_microscope_preview)
 
+    def submit_question(self, question: str) -> bool:
+        """Submit a companion question without authorizing automated execution."""
+        if not question.strip() or self.active_run_id or self.phase_var.get() == "Planning":
+            return False
+        if self.planning_thread is not None and self.planning_thread.is_alive():
+            return False
+        self.permission_mode_var.set(self.MODE_CHAT)
+        self.input_text.delete("1.0", "end")
+        self.input_text.insert("1.0", question.strip())
+        self.generate_plan()
+        return True
+
     def generate_plan(self) -> str:
         if self.active_run_id:
             self.status_var.set("Wait for the running step to finish, or Stop it first.")

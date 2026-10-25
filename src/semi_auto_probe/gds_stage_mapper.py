@@ -2002,9 +2002,13 @@ class GDSStageMapperPanel:
             self.viewer.set_stage_overlay(None, None)
             self._update_layout_jog_state()
             self._set_status(f"LayoutBond mapping invalid: {exc}")
+            if autosave and getattr(self, "on_nature_calibration", None):
+                self.on_nature_calibration(False)
             return False
 
         self.mapper = mapper
+        if autosave and getattr(self, "on_nature_calibration", None):
+            self.on_nature_calibration(True)
         self._update_layout_jog_state()
         self._update_mapping_display()
         self._update_target_preview()
